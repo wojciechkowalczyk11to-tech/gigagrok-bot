@@ -1,0 +1,305 @@
+"""Async SQLite database layer for GigaGrok Bot."""
+
+from __future__ import annotations
+
+from datetime import date as date_type, datetime, timezone
+from typing import Any
+
+import aiosqlite
+import structlog
+
+from config import settings
+
+logger = structlog.get_logger(__name__)
+
+# ---------------------------------------------------------------------------
+# Cost constants (xAI pricing as of 2026‑02)
+# ---------------------------------------------------------------------------
+COST_PER_M_INPUT: float = 0.20   # $0.20 per 1M input tokens
+COST_PER_M_OUTPUT: float = 0.50  # $0.50 per 1M output tokens (reasoning too)
+
+
+def calculate_cost(tokens_in: int, tokens_out: int, reasoning_tokens: int) -> float:
+    """Return estimated USD cost for a single request."""
+    input_cost = (tokens_in / 1_000_000) * COST_PER_M_INPUT
+    output_cost = ((tokens_out + reasoning_tokens) / 1_000_000) * COST_PER_M_OUTPUT
+    return round(input_cost + output_cost, 6)
+
+
+# ---------------------------------------------------------------------------
+# Schema
+# ---------------------------------------------------------------------------
+_SCHEMA = """
+CREATE TABLE IF NOT EXISTS conversations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    role TEXT NOT NULL,
+    content TEXT NOT NULL,
+    reasoning_content TEXT,
+    model TEXT,
+    tokens_in INTEGER DEFAULT 0,
+    tokens_out INTEGER DEFAULT 0,
+    reasoning_tokens INTEGER DEFAULT 0,
+    cost_usd REAL DEFAULT 0.0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS user_settings (
+    user_id INTEGER PRIMARY KEY,
+    system_prompt TEXT,
+    reasoning_effort TEXT DEFAULT 'high',
+    voice_enabled INTEGER DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS usage_stats (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    date TEXT NOT NULL,
+    total_requests INTEGER DEFAULT 0,
+    total_tokens_in INTEGER DEFAULT 0,
+    total_tokens_out INTEGER DEFAULT 0,
+    total_reasoning_tokens INTEGER DEFAULT 0,
+    total_cost_usd REAL DEFAULT 0.0,
+    UNIQUE(user_id, date)
+);
+
+CREATE INDEX IF NOT EXISTS idx_conv_user_time ON conversations(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_stats_user_date ON usage_stats(user_id, date);
+"""
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+def _today() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+
+async def _get_db() -> aiosqlite.Connection:
+    db = await aiosqlite.connect(settings.db_path)
+    db.row_factory = aiosqlite.Row
+    await db.execute("PRAGMA journal_mode=WAL")
+    return db
+
+
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
+
+async def init_db() -> None:
+    """Create tables if they don't exist."""
+    db = await _get_db()
+    try:
+        await db.executescript(_SCHEMA)
+        await db.commit()
+        logger.info("database_initialized", path=settings.db_path)
+    finally:
+        await db.close()
+
+
+async def save_message(
+    user_id: int,
+    role: str,
+    content: str,
+    reasoning_content: str | None = None,
+    model: str | None = None,
+    tokens_in: int = 0,
+    tokens_out: int = 0,
+    reasoning_tokens: int = 0,
+    cost_usd: float = 0.0,
+) -> None:
+    """Persist a single conversation message."""
+    db = await _get_db()
+    try:
+        await db.execute(
+            """
+            INSERT INTO conversations
+                (user_id, role, content, reasoning_content, model,
+                 tokens_in, tokens_out, reasoning_tokens, cost_usd)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (user_id, role, content, reasoning_content, model,
+             tokens_in, tokens_out, reasoning_tokens, cost_usd),
+        )
+        await db.commit()
+    except Exception:
+        logger.exception("save_message_failed", user_id=user_id, role=role)
+    finally:
+        await db.close()
+
+
+async def get_history(user_id: int, limit: int = 20) -> list[dict[str, str]]:
+    """Return the last *limit* messages for *user_id* (oldest first)."""
+    db = await _get_db()
+    try:
+        cursor = await db.execute(
+            """
+            SELECT role, content FROM (
+                SELECT role, content, created_at
+                FROM conversations
+                WHERE user_id = ?
+                ORDER BY created_at DESC
+                LIMIT ?
+            ) sub ORDER BY created_at ASC
+            """,
+            (user_id, limit),
+        )
+        rows = await cursor.fetchall()
+        return [{"role": row["role"], "content": row["content"]} for row in rows]
+    except Exception:
+        logger.exception("get_history_failed", user_id=user_id)
+        return []
+    finally:
+        await db.close()
+
+
+async def clear_history(user_id: int) -> int:
+    """Delete all conversation rows for *user_id*. Return count deleted."""
+    db = await _get_db()
+    try:
+        cursor = await db.execute(
+            "DELETE FROM conversations WHERE user_id = ?", (user_id,)
+        )
+        await db.commit()
+        return cursor.rowcount  # type: ignore[return-value]
+    except Exception:
+        logger.exception("clear_history_failed", user_id=user_id)
+        return 0
+    finally:
+        await db.close()
+
+
+async def update_daily_stats(
+    user_id: int,
+    tokens_in: int,
+    tokens_out: int,
+    reasoning_tokens: int,
+    cost_usd: float,
+) -> None:
+    """Upsert today's aggregated usage stats."""
+    today = _today()
+    db = await _get_db()
+    try:
+        await db.execute(
+            """
+            INSERT INTO usage_stats
+                (user_id, date, total_requests, total_tokens_in,
+                 total_tokens_out, total_reasoning_tokens, total_cost_usd)
+            VALUES (?, ?, 1, ?, ?, ?, ?)
+            ON CONFLICT(user_id, date) DO UPDATE SET
+                total_requests = total_requests + 1,
+                total_tokens_in = total_tokens_in + excluded.total_tokens_in,
+                total_tokens_out = total_tokens_out + excluded.total_tokens_out,
+                total_reasoning_tokens = total_reasoning_tokens + excluded.total_reasoning_tokens,
+                total_cost_usd = total_cost_usd + excluded.total_cost_usd
+            """,
+            (user_id, today, tokens_in, tokens_out, reasoning_tokens, cost_usd),
+        )
+        await db.commit()
+    except Exception:
+        logger.exception("update_daily_stats_failed", user_id=user_id)
+    finally:
+        await db.close()
+
+
+async def get_daily_stats(user_id: int, date: str | None = None) -> dict[str, Any]:
+    """Return aggregated stats for *date* (default: today)."""
+    target = date or _today()
+    db = await _get_db()
+    try:
+        cursor = await db.execute(
+            "SELECT * FROM usage_stats WHERE user_id = ? AND date = ?",
+            (user_id, target),
+        )
+        row = await cursor.fetchone()
+        if row:
+            return dict(row)
+        return {
+            "user_id": user_id,
+            "date": target,
+            "total_requests": 0,
+            "total_tokens_in": 0,
+            "total_tokens_out": 0,
+            "total_reasoning_tokens": 0,
+            "total_cost_usd": 0.0,
+        }
+    except Exception:
+        logger.exception("get_daily_stats_failed", user_id=user_id)
+        return {}
+    finally:
+        await db.close()
+
+
+async def get_all_time_stats(user_id: int) -> dict[str, Any]:
+    """Return all‑time aggregated stats for *user_id*."""
+    db = await _get_db()
+    try:
+        cursor = await db.execute(
+            """
+            SELECT
+                COALESCE(SUM(total_requests), 0)         AS total_requests,
+                COALESCE(SUM(total_tokens_in), 0)        AS total_tokens_in,
+                COALESCE(SUM(total_tokens_out), 0)       AS total_tokens_out,
+                COALESCE(SUM(total_reasoning_tokens), 0) AS total_reasoning_tokens,
+                COALESCE(SUM(total_cost_usd), 0.0)       AS total_cost_usd
+            FROM usage_stats
+            WHERE user_id = ?
+            """,
+            (user_id,),
+        )
+        row = await cursor.fetchone()
+        if row:
+            return dict(row)
+        return {
+            "total_requests": 0,
+            "total_tokens_in": 0,
+            "total_tokens_out": 0,
+            "total_reasoning_tokens": 0,
+            "total_cost_usd": 0.0,
+        }
+    except Exception:
+        logger.exception("get_all_time_stats_failed", user_id=user_id)
+        return {}
+    finally:
+        await db.close()
+
+
+async def set_user_setting(user_id: int, key: str, value: str) -> None:
+    """Create or update a single user setting."""
+    db = await _get_db()
+    try:
+        # Ensure user row exists
+        await db.execute(
+            "INSERT OR IGNORE INTO user_settings (user_id) VALUES (?)",
+            (user_id,),
+        )
+        await db.execute(
+            f"UPDATE user_settings SET {key} = ?, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?",
+            (value, user_id),
+        )
+        await db.commit()
+    except Exception:
+        logger.exception("set_user_setting_failed", user_id=user_id, key=key)
+    finally:
+        await db.close()
+
+
+async def get_user_setting(user_id: int, key: str) -> str | None:
+    """Return a single setting value or ``None``."""
+    db = await _get_db()
+    try:
+        cursor = await db.execute(
+            f"SELECT {key} FROM user_settings WHERE user_id = ?",
+            (user_id,),
+        )
+        row = await cursor.fetchone()
+        if row:
+            return row[key]
+        return None
+    except Exception:
+        logger.exception("get_user_setting_failed", user_id=user_id, key=key)
+        return None
+    finally:
+        await db.close()
