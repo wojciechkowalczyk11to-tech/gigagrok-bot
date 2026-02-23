@@ -266,8 +266,16 @@ async def get_all_time_stats(user_id: int) -> dict[str, Any]:
         await db.close()
 
 
+_ALLOWED_SETTING_COLUMNS: frozenset[str] = frozenset(
+    {"system_prompt", "reasoning_effort", "voice_enabled"}
+)
+
+
 async def set_user_setting(user_id: int, key: str, value: str) -> None:
     """Create or update a single user setting."""
+    if key not in _ALLOWED_SETTING_COLUMNS:
+        logger.warning("set_user_setting_invalid_key", user_id=user_id, key=key)
+        return
     db = await _get_db()
     try:
         # Ensure user row exists
@@ -276,7 +284,7 @@ async def set_user_setting(user_id: int, key: str, value: str) -> None:
             (user_id,),
         )
         await db.execute(
-            f"UPDATE user_settings SET {key} = ?, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?",
+            f"UPDATE user_settings SET {key} = ?, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?",  # key validated above
             (value, user_id),
         )
         await db.commit()
@@ -288,10 +296,13 @@ async def set_user_setting(user_id: int, key: str, value: str) -> None:
 
 async def get_user_setting(user_id: int, key: str) -> str | None:
     """Return a single setting value or ``None``."""
+    if key not in _ALLOWED_SETTING_COLUMNS:
+        logger.warning("get_user_setting_invalid_key", user_id=user_id, key=key)
+        return None
     db = await _get_db()
     try:
         cursor = await db.execute(
-            f"SELECT {key} FROM user_settings WHERE user_id = ?",
+            f"SELECT {key} FROM user_settings WHERE user_id = ?",  # key validated above
             (user_id,),
         )
         row = await cursor.fetchone()
