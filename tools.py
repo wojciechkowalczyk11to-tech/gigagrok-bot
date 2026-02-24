@@ -9,6 +9,7 @@ TOOL_WEB_SEARCH: dict[str, Any] = {
     "function": {
         "name": "web_search",
         "description": "Search the internet for current information, news, facts, documentation",
+        "parameters": {},
     },
 }
 
@@ -17,6 +18,7 @@ TOOL_X_SEARCH: dict[str, Any] = {
     "function": {
         "name": "x_search",
         "description": "Search posts and discussions on X (Twitter)",
+        "parameters": {},
     },
 }
 
@@ -25,6 +27,7 @@ TOOL_CODE_EXEC: dict[str, Any] = {
     "function": {
         "name": "code_execution",
         "description": "Execute code in a sandboxed environment. Supports Python, JavaScript, and more.",
+        "parameters": {},
     },
 }
 
