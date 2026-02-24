@@ -11,6 +11,7 @@ from telegram.ext import Application, CommandHandler, MessageHandler, filters
 from config import settings
 from db import init_db
 from grok_client import GrokClient
+from healthcheck import start_healthcheck_server
 from handlers.admin import adduser_command, removeuser_command, users_command
 from handlers.chat import handle_message, init_grok_client
 from handlers.collection import collection_command
@@ -77,6 +78,13 @@ async def post_shutdown(application: Application) -> None:  # type: ignore[type-
 # ---------------------------------------------------------------------------
 def main() -> None:
     """Build and run the Telegram bot in webhook mode."""
+    health_server = None
+    try:
+        health_server = start_healthcheck_server(settings.db_path, port=8080)
+        logger.info("healthcheck_started", port=8080)
+    except Exception:
+        logger.exception("healthcheck_start_failed")
+
     app = (
         Application.builder()
         .token(settings.telegram_bot_token)
@@ -110,14 +118,20 @@ def main() -> None:
     webhook_url = f"{settings.webhook_url}/{settings.webhook_path}"
     logger.info("starting_webhook", url=webhook_url, port=settings.webhook_port)
 
-    app.run_webhook(
-        listen="0.0.0.0",
-        port=settings.webhook_port,
-        url_path=settings.webhook_path,
-        webhook_url=webhook_url,
-        secret_token=settings.webhook_secret,
-        allowed_updates=["message", "callback_query"],
-    )
+    try:
+        app.run_webhook(
+            listen="0.0.0.0",
+            port=settings.webhook_port,
+            url_path=settings.webhook_path,
+            webhook_url=webhook_url,
+            secret_token=settings.webhook_secret,
+            allowed_updates=["message", "callback_query"],
+        )
+    finally:
+        if health_server:
+            health_server.shutdown()
+            health_server.server_close()
+            logger.info("healthcheck_stopped")
 
 
 if __name__ == "__main__":
