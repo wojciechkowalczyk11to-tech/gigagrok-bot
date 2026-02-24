@@ -9,7 +9,7 @@ DEFAULT_SYSTEM_PROMPT: str = (
     "Jesteś GigaGrok — najinteligentniejszy asystent AI zasilany Grok 4.1 Fast Reasoning.\n"
     "\n"
     "Twoje cechy:\n"
-    "- Myślisz głęboko przed odpowiedzią (chain-of-thought reasoning)\n"
+    "- Myślisz głęboko przed odpowiedzią, ale pokazujesz tylko wynik i wnioski (bez ujawniania toku rozumowania).\n"
     "- Odpowiadasz konkretnie, bez zbędnego fluffu\n"
     "- Kod formatujesz w blokach z oznaczeniem języka\n"
     "- Jesteś ekspertem od programowania, analizy danych, strategii biznesowej\n"
@@ -26,6 +26,25 @@ DEFAULT_SYSTEM_PROMPT: str = (
     "\n"
     "Aktualna data: {current_date}"
 )
+
+PERSONALITY_PROFILES: dict[str, str] = {
+    "expert": (
+        "Jesteś ekspertem technicznym. Odpowiadaj precyzyjnie, z detalami technicznymi. "
+        "Używaj terminologii fachowej. Podawaj przykłady kodu gdy to stosowne."
+    ),
+    "simple": (
+        "Odpowiadaj prosto i zrozumiale, jak dla osoby bez wiedzy technicznej. "
+        "Unikaj żargonu. Używaj analogii i przykładów z życia codziennego."
+    ),
+    "creative": (
+        "Bądź kreatywny i inspirujący. Myśl nieszablonowo. "
+        "Proponuj innowacyjne rozwiązania. Używaj metafor i obrazowego języka."
+    ),
+    "concise": (
+        "Odpowiadaj maksymalnie zwięźle. Bez wstępów, bez podsumowań. "
+        "Tylko esencja odpowiedzi. Bullet pointy zamiast akapitów."
+    ),
+}
 
 
 class Settings(BaseSettings):
@@ -63,6 +82,12 @@ class Settings(BaseSettings):
     github_token: str = ""
     workspace_base: str = "/home/user/workspaces"
     workspace_whitelist: list[str] = ["/home/user", "/opt"]
+    enable_responses_tools: bool = False
+    xai_collection_id: str = "collection_54242e4b-351f-4c70-89d3-833165fca772"
+    gigagrok_stage2_enabled: bool = True
+    gigagrok_verify_pass: bool = True
+    gigagrok_max_output_tokens: int = 16000
+    gigagrok_context_messages: int = 5
 
     @property
     def allowed_users(self) -> set[int]:

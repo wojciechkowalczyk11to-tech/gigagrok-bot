@@ -12,7 +12,7 @@ from telegram.ext import ContextTypes
 from config import DEFAULT_SYSTEM_PROMPT, settings
 from db import calculate_cost, get_history, save_message, update_daily_stats, get_user_setting
 from grok_client import GrokClient
-from utils import check_access, escape_html, format_footer, get_current_date, split_message
+from utils import check_access, escape_html, format_footer, get_current_date, markdown_to_telegram_html, split_message
 
 logger = structlog.get_logger(__name__)
 _PENDING_FILE_KEY = "pending_workspace_file_context"
@@ -134,7 +134,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     )
 
     # 8. Final message (split if needed)
-    final_text = f"{escape_html(full_content)}\n\n<code>{escape_html(footer)}</code>"
+    final_text = f"{markdown_to_telegram_html(full_content)}\n\n<code>{escape_html(footer)}</code>"
     parts = split_message(final_text, max_length=4000)
 
     try:

@@ -58,8 +58,8 @@ class GrokClient:
             "max_tokens": max_tokens,
         }
 
-        # reasoning param ONLY for reasoning models
-        if reasoning_effort and "reasoning" in model:
+        # reasoning param ONLY for models known to support effort
+        if reasoning_effort and model.startswith("grok-3-mini"):
             body["reasoning"] = {"effort": reasoning_effort}
 
         if tools:
@@ -192,7 +192,7 @@ class GrokClient:
             "max_tokens": max_tokens,
         }
 
-        if reasoning_effort and "reasoning" in model:
+        if reasoning_effort and model.startswith("grok-3-mini"):
             body["reasoning"] = {"effort": reasoning_effort}
 
         if tools:
@@ -243,61 +243,3 @@ class GrokClient:
     async def close(self) -> None:
         """Gracefully close the underlying HTTP client."""
         await self._client.aclose()
-
-    # ------------------------------------------------------------------
-    # Collections API
-    # ------------------------------------------------------------------
-    async def create_collection(self, name: str) -> dict[str, Any]:
-        """Create xAI collection."""
-        normalized_name = name.strip()
-        if not normalized_name:
-            raise ValueError("Collection name cannot be empty.")
-        resp = await self._client.post(
-            f"{self._base_url}/collections",
-            json={"name": normalized_name},
-        )
-        resp.raise_for_status()
-        return resp.json()  # type: ignore[no-any-return]
-
-    async def list_collections(self) -> list[dict[str, Any]]:
-        """List xAI collections."""
-        resp = await self._client.get(f"{self._base_url}/collections")
-        resp.raise_for_status()
-        payload = resp.json()
-        if isinstance(payload, list):
-            return payload  # type: ignore[return-value]
-        data = payload.get("data", [])
-        return data if isinstance(data, list) else []
-
-    async def upload_collection_document(
-        self,
-        collection_id: str,
-        filename: str,
-        file_bytes: bytes,
-        mime_type: str = "application/octet-stream",
-    ) -> dict[str, Any]:
-        """Upload single document to xAI collection."""
-        resp = await self._client.post(
-            f"{self._base_url}/collections/{collection_id}/documents",
-            files={"file": (filename, file_bytes, mime_type)},
-        )
-        resp.raise_for_status()
-        return resp.json()  # type: ignore[no-any-return]
-
-    async def list_collection_documents(self, collection_id: str) -> list[dict[str, Any]]:
-        """List documents in xAI collection."""
-        resp = await self._client.get(f"{self._base_url}/collections/{collection_id}/documents")
-        resp.raise_for_status()
-        payload = resp.json()
-        if isinstance(payload, list):
-            return payload  # type: ignore[return-value]
-        data = payload.get("data", [])
-        return data if isinstance(data, list) else []
-
-    async def delete_collection(self, collection_id: str) -> bool:
-        """Delete xAI collection."""
-        resp = await self._client.delete(f"{self._base_url}/collections/{collection_id}")
-        if resp.status_code in (200, 202, 204):
-            return True
-        resp.raise_for_status()
-        return False

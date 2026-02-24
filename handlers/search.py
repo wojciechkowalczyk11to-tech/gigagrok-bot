@@ -11,7 +11,7 @@ from telegram.ext import ContextTypes
 from config import settings
 from db import calculate_cost, save_message, update_daily_stats
 from grok_client import GrokClient
-from utils import check_access, escape_html, format_footer, split_message
+from utils import check_access, escape_html, format_footer, markdown_to_telegram_html, split_message
 
 logger = structlog.get_logger(__name__)
 
@@ -146,7 +146,7 @@ async def _run_search_command(
         cost,
         elapsed,
     )
-    final_text = f"{escape_html(full_content)}\n\n<code>{escape_html(footer)}</code>"
+    final_text = f"{markdown_to_telegram_html(full_content)}\n\n<code>{escape_html(footer)}</code>"
     parts = split_message(final_text, max_length=4000)
 
     try:

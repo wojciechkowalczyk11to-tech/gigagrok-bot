@@ -25,6 +25,60 @@ def escape_html(text: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Markdown → Telegram HTML conversion
+# ---------------------------------------------------------------------------
+_CODE_BLOCK_CONVERT_RE = re.compile(r"```(\w*)\n([\s\S]*?)```")
+_INLINE_CODE_RE = re.compile(r"`([^`]+)`")
+_BOLD_RE = re.compile(r"\*\*(.+?)\*\*")
+_ITALIC_RE = re.compile(r"(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)")
+_LINK_RE = re.compile(r"\[([^\]]+)\]\((https?://[^\)]+)\)")
+
+
+def markdown_to_telegram_html(text: str) -> str:
+    """Convert common Markdown to Telegram-safe HTML.
+
+    Handles code blocks, inline code, bold, italic, and links.
+    All content is HTML-escaped to prevent broken tags in Telegram.
+    """
+    # 1. Extract code blocks first to protect their contents
+    code_blocks: list[str] = []
+
+    def _replace_code_block(m: re.Match[str]) -> str:
+        idx = len(code_blocks)
+        escaped_code = escape_html(m.group(2).rstrip("\n"))
+        code_blocks.append(f"<pre><code>{escaped_code}</code></pre>")
+        return f"\x00CODEBLOCK{idx}\x00"
+
+    result = _CODE_BLOCK_CONVERT_RE.sub(_replace_code_block, text)
+
+    # 2. Extract inline code
+    inline_codes: list[str] = []
+
+    def _replace_inline_code(m: re.Match[str]) -> str:
+        idx = len(inline_codes)
+        inline_codes.append(f"<code>{escape_html(m.group(1))}</code>")
+        return f"\x00INLINE{idx}\x00"
+
+    result = _INLINE_CODE_RE.sub(_replace_inline_code, result)
+
+    # 3. Escape HTML in remaining text
+    result = escape_html(result)
+
+    # 4. Apply formatting
+    result = _BOLD_RE.sub(r"<b>\1</b>", result)
+    result = _ITALIC_RE.sub(r"<i>\1</i>", result)
+    result = _LINK_RE.sub(r'<a href="\2">\1</a>', result)
+
+    # 5. Restore code blocks and inline codes
+    for idx, block in enumerate(code_blocks):
+        result = result.replace(f"\x00CODEBLOCK{idx}\x00", block)
+    for idx, code in enumerate(inline_codes):
+        result = result.replace(f"\x00INLINE{idx}\x00", code)
+
+    return result
+
+
+# ---------------------------------------------------------------------------
 # Message splitting
 # ---------------------------------------------------------------------------
 _CODE_BLOCK_RE = re.compile(r"```[\s\S]*?```")

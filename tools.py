@@ -1,19 +1,32 @@
-"""Definitions for xAI search and tool configurations."""
+"""Server-side tool definitions for xAI /responses and /chat/completions API."""
 
 from __future__ import annotations
 from typing import Any
 
-# Search parameter for built-in web search
-SEARCH_WEB = {"search": {"enabled": True}}
 
-# Agent tools (require client-side handling)
-TOOL_CODE_EXEC: dict[str, Any] = {
-    "type": "function",
-    "function": {
-        "name": "code_execution",
-        "description": "Execute code in a sandboxed environment.",
-        "parameters": {},
-    },
-}
+# ---------------------------------------------------------------------------
+# Server-side tools (for /responses or tool-augmented /chat/completions)
+# ---------------------------------------------------------------------------
 
-TOOLS_ALL: list[dict[str, Any]] = [TOOL_CODE_EXEC]
+def tool_file_search(collection_id: str) -> dict[str, Any]:
+    """Return a file_search tool definition bound to a vector store."""
+    return {
+        "type": "file_search",
+        "vector_store_ids": [collection_id],
+        "max_num_results": 10,
+    }
+
+
+TOOL_WEB: dict[str, Any] = {"type": "web_search"}
+TOOL_X: dict[str, Any] = {"type": "x_search"}
+TOOL_CODE: dict[str, Any] = {"type": "code_interpreter"}
+
+
+def build_stage1_tools(collection_id: str) -> list[dict[str, Any]]:
+    """Stage 1: collection search only."""
+    return [tool_file_search(collection_id)]
+
+
+def build_stage2_tools() -> list[dict[str, Any]]:
+    """Stage 2: web, X, and code tools."""
+    return [TOOL_WEB, TOOL_X, TOOL_CODE]
