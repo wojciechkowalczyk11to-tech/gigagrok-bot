@@ -19,6 +19,7 @@ from handlers.image import handle_photo, image_command
 from handlers.mode import fast_command
 from handlers.search import websearch_command, xsearch_command
 from handlers.start import help_command, start_command
+from handlers.voice import handle_voice, voice_toggle
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -94,8 +95,10 @@ def main() -> None:
     app.add_handler(CommandHandler("adduser", adduser_command))
     app.add_handler(CommandHandler("removeuser", removeuser_command))
     app.add_handler(CommandHandler("collection", collection_command))
+    app.add_handler(CommandHandler("voice", voice_toggle))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
+    app.add_handler(MessageHandler(filters.VOICE | filters.AUDIO, handle_voice))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     # Webhook

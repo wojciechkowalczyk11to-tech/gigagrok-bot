@@ -51,6 +51,7 @@ class Settings(BaseSettings):
     secondary_bot_token: str = ""
     secondary_webhook_path: str = "webhook2"
     secondary_webhook_port: int = 8444
+    groq_api_key: str = ""
     xai_base_url: str = "https://api.x.ai/v1"
     xai_model_reasoning: str = "grok-4-1-fast-reasoning"
     xai_model_fast: str = "grok-4-1-fast"

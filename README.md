@@ -10,5 +10,6 @@ Telegram bot powered by Grok 4.1 Fast Reasoning.
 ## Requirements
 - Python 3.12+
 - xAI API key (console.x.ai)
+- ffmpeg (`sudo apt install ffmpeg`) — wymagane do odpowiedzi głosowych TTS
 - Telegram Bot token (@BotFather)
 - Cloudflare Tunnel na grok.nexus-oc.pl → localhost:8443

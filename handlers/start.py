@@ -50,6 +50,7 @@ _HELP_TEXT = (
     "\n"
     "💬 <b>Chat:</b>\n"
     "Wyślij wiadomość → odpowiedź z reasoning\n"
+    "🎤 Wyślij voice/audio → auto-transkrypcja + odpowiedź Grok\n"
     "\n"
     "⚡ /fast &lt;tekst&gt; → szybka odpowiedź bez reasoning\n"
     "🧠 /think &lt;tekst&gt; → deep reasoning mode\n"
