@@ -30,7 +30,7 @@ def escape_html(text: str) -> str:
 _CODE_BLOCK_CONVERT_RE = re.compile(r"```(\w*)\n([\s\S]*?)```")
 _INLINE_CODE_RE = re.compile(r"`([^`]+)`")
 _BOLD_RE = re.compile(r"\*\*(.+?)\*\*")
-_ITALIC_RE = re.compile(r"(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)")
+_ITALIC_RE = re.compile(r"(?<!\*)\*([^\*]+)\*(?!\*)")
 _LINK_RE = re.compile(r"\[([^\]]+)\]\((https?://[^\)]+)\)")
 
 
