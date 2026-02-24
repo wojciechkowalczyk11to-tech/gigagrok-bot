@@ -13,6 +13,7 @@ from db import init_db
 from grok_client import GrokClient
 from handlers.admin import adduser_command, removeuser_command, users_command
 from handlers.chat import handle_message, init_grok_client
+from handlers.mode import fast_command
 from handlers.start import help_command, start_command
 
 # ---------------------------------------------------------------------------
@@ -80,6 +81,7 @@ def main() -> None:
     # Handlers
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("help", help_command))
+    app.add_handler(CommandHandler("fast", fast_command))
     app.add_handler(CommandHandler("users", users_command))
     app.add_handler(CommandHandler("adduser", adduser_command))
     app.add_handler(CommandHandler("removeuser", removeuser_command))
