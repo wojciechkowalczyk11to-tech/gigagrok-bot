@@ -71,8 +71,47 @@ CREATE TABLE IF NOT EXISTS dynamic_users (
     added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS local_collections (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS local_collection_documents (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    collection_id INTEGER NOT NULL,
+    filename TEXT NOT NULL,
+    content TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(collection_id, filename),
+    FOREIGN KEY(collection_id) REFERENCES local_collections(id) ON DELETE CASCADE
+);
+
 CREATE INDEX IF NOT EXISTS idx_conv_user_time ON conversations(user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_stats_user_date ON usage_stats(user_id, date);
+CREATE INDEX IF NOT EXISTS idx_local_docs_collection ON local_collection_documents(collection_id, created_at DESC);
+"""
+
+_FTS_SCHEMA = """
+CREATE VIRTUAL TABLE IF NOT EXISTS local_collection_documents_fts
+USING fts5(filename, content, content='local_collection_documents', content_rowid='id');
+
+CREATE TRIGGER IF NOT EXISTS local_docs_ai AFTER INSERT ON local_collection_documents BEGIN
+    INSERT INTO local_collection_documents_fts(rowid, filename, content)
+    VALUES (new.id, new.filename, new.content);
+END;
+
+CREATE TRIGGER IF NOT EXISTS local_docs_ad AFTER DELETE ON local_collection_documents BEGIN
+    INSERT INTO local_collection_documents_fts(local_collection_documents_fts, rowid, filename, content)
+    VALUES('delete', old.id, old.filename, old.content);
+END;
+
+CREATE TRIGGER IF NOT EXISTS local_docs_au AFTER UPDATE ON local_collection_documents BEGIN
+    INSERT INTO local_collection_documents_fts(local_collection_documents_fts, rowid, filename, content)
+    VALUES('delete', old.id, old.filename, old.content);
+    INSERT INTO local_collection_documents_fts(rowid, filename, content)
+    VALUES (new.id, new.filename, new.content);
+END;
 """
 
 
@@ -99,6 +138,10 @@ async def init_db() -> None:
     db = await _get_db()
     try:
         await db.executescript(_SCHEMA)
+        try:
+            await db.executescript(_FTS_SCHEMA)
+        except Exception:
+            logger.warning("fts5_init_failed_fallback_like_enabled")
         await db.commit()
         logger.info("database_initialized", path=settings.db_path)
     finally:
@@ -421,5 +464,158 @@ async def get_users_usage_summary(
             int(user_id): {"total_requests": 0, "total_cost_usd": 0.0}
             for user_id in user_ids
         }
+    finally:
+        await db.close()
+
+
+async def create_local_collection(name: str) -> int | None:
+    """Create local fallback collection and return collection ID."""
+    db = await _get_db()
+    try:
+        cursor = await db.execute(
+            "INSERT INTO local_collections (name) VALUES (?)",
+            (name.strip(),),
+        )
+        await db.commit()
+        row_id = cursor.lastrowid
+        return int(row_id) if row_id is not None else None
+    except Exception:
+        logger.exception("create_local_collection_failed", name=name)
+        return None
+    finally:
+        await db.close()
+
+
+async def list_local_collections() -> list[dict[str, Any]]:
+    """Return local fallback collections with document counts."""
+    db = await _get_db()
+    try:
+        cursor = await db.execute(
+            """
+            SELECT c.id, c.name, c.created_at, COUNT(d.id) AS document_count
+            FROM local_collections c
+            LEFT JOIN local_collection_documents d ON d.collection_id = c.id
+            GROUP BY c.id, c.name, c.created_at
+            ORDER BY c.created_at ASC, c.id ASC
+            """
+        )
+        rows = await cursor.fetchall()
+        return [dict(row) for row in rows]
+    except Exception:
+        logger.exception("list_local_collections_failed")
+        return []
+    finally:
+        await db.close()
+
+
+async def delete_local_collection(collection_id: int) -> int:
+    """Delete local fallback collection by ID."""
+    db = await _get_db()
+    try:
+        cursor = await db.execute("DELETE FROM local_collections WHERE id = ?", (collection_id,))
+        await db.commit()
+        return cursor.rowcount  # type: ignore[return-value]
+    except Exception:
+        logger.exception("delete_local_collection_failed", collection_id=collection_id)
+        return 0
+    finally:
+        await db.close()
+
+
+async def add_local_collection_document(
+    collection_id: int,
+    filename: str,
+    content: str,
+) -> bool:
+    """Upsert local fallback document in a collection."""
+    db = await _get_db()
+    try:
+        await db.execute(
+            """
+            INSERT INTO local_collection_documents (collection_id, filename, content)
+            VALUES (?, ?, ?)
+            ON CONFLICT(collection_id, filename) DO UPDATE SET
+                content = excluded.content,
+                created_at = CURRENT_TIMESTAMP
+            """,
+            (collection_id, filename, content),
+        )
+        await db.commit()
+        return True
+    except Exception:
+        logger.exception(
+            "add_local_collection_document_failed",
+            collection_id=collection_id,
+            filename=filename,
+        )
+        return False
+    finally:
+        await db.close()
+
+
+async def list_local_collection_documents(collection_id: int) -> list[dict[str, Any]]:
+    """List local fallback documents in a collection."""
+    db = await _get_db()
+    try:
+        cursor = await db.execute(
+            """
+            SELECT id, filename, created_at
+            FROM local_collection_documents
+            WHERE collection_id = ?
+            ORDER BY created_at DESC, id DESC
+            """,
+            (collection_id,),
+        )
+        rows = await cursor.fetchall()
+        return [dict(row) for row in rows]
+    except Exception:
+        logger.exception("list_local_collection_documents_failed", collection_id=collection_id)
+        return []
+    finally:
+        await db.close()
+
+
+async def search_local_collection_documents(
+    collection_id: int,
+    query: str,
+    limit: int = 5,
+) -> list[dict[str, Any]]:
+    """Search local fallback documents with FTS5; fallback to LIKE."""
+    db = await _get_db()
+    try:
+        try:
+            cursor = await db.execute(
+                """
+                SELECT d.id, d.filename, snippet(local_collection_documents_fts, 1, '[', ']', '…', 18) AS snippet
+                FROM local_collection_documents_fts
+                JOIN local_collection_documents d ON d.id = local_collection_documents_fts.rowid
+                WHERE d.collection_id = ? AND local_collection_documents_fts MATCH ?
+                ORDER BY bm25(local_collection_documents_fts)
+                LIMIT ?
+                """,
+                (collection_id, query, limit),
+            )
+            rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
+        except Exception:
+            cursor = await db.execute(
+                """
+                SELECT id, filename, substr(content, 1, 220) AS snippet
+                FROM local_collection_documents
+                WHERE collection_id = ? AND content LIKE ?
+                ORDER BY created_at DESC, id DESC
+                LIMIT ?
+                """,
+                (collection_id, f"%{query}%", limit),
+            )
+            rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
+    except Exception:
+        logger.exception(
+            "search_local_collection_documents_failed",
+            collection_id=collection_id,
+            query=query,
+        )
+        return []
     finally:
         await db.close()
