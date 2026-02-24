@@ -71,6 +71,10 @@ gigagrok-bot/
 - Agent Tools (server-side): web_search, x_search, code_execution, collections_search
 - Image input: base64 w messages (type: image_url)
 - Streaming: SSE, delta.content + delta.reasoning_content
+- WAŻNE: Web search NIE działa przez tools parameter. Używaj:
+  body["search"] = {"enabled": True}
+Parametr "search" dodaje się bezpośrednio do body requestu, nie jako tool.
+grok_client.py ma parametr search: dict | None w chat_stream() i chat().
 
 ## Telegram
 - Webhook mode na grok.nexus-oc.pl/webhook (port 8443)
