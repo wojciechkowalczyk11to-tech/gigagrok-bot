@@ -28,7 +28,11 @@ _TEXT_EXTENSIONS = {
 
 
 async def image_to_base64(file_bytes: bytes, max_size_mb: float = 5.0) -> tuple[str, str]:
-    """Konwertuj obraz do base64. Kompresuj jeśli za duży."""
+    """Konwertuj obraz do base64 i zwróć ``(base64_str, mime_type)``.
+
+    :param file_bytes: Surowe bajty obrazu.
+    :param max_size_mb: Maksymalny rozmiar obrazu po kompresji.
+    """
     max_bytes = int(max_size_mb * 1024 * 1024)
 
     image = Image.open(io.BytesIO(file_bytes))
@@ -69,7 +73,10 @@ async def image_to_base64(file_bytes: bytes, max_size_mb: float = 5.0) -> tuple[
 
 
 async def extract_text_from_pdf(file_bytes: bytes) -> str:
-    """Wyciągnij tekst z PDF używając pdfplumber."""
+    """Wyciągnij tekst z PDF i zwróć połączoną treść stron.
+
+    :param file_bytes: Surowe bajty pliku PDF.
+    """
     chunks: list[str] = []
     with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
         for page in pdf.pages:
@@ -80,14 +87,20 @@ async def extract_text_from_pdf(file_bytes: bytes) -> str:
 
 
 async def extract_text_from_docx(file_bytes: bytes) -> str:
-    """Wyciągnij tekst z DOCX używając python-docx."""
+    """Wyciągnij tekst z DOCX i zwróć połączoną treść akapitów.
+
+    :param file_bytes: Surowe bajty pliku DOCX.
+    """
     document = Document(io.BytesIO(file_bytes))
     lines = [paragraph.text.strip() for paragraph in document.paragraphs if paragraph.text]
     return "\n".join(line for line in lines if line)
 
 
 async def extract_text_from_zip(file_bytes: bytes) -> dict[str, str]:
-    """Wypakuj ZIP i zwróć tekstowe pliki jako {filename: content}."""
+    """Wypakuj ZIP i zwróć mapę ``{filename: content}`` dla plików tekstowych.
+
+    :param file_bytes: Surowe bajty archiwum ZIP.
+    """
     extracted: dict[str, str] = {}
     with zipfile.ZipFile(io.BytesIO(file_bytes)) as archive:
         for member in archive.infolist():
@@ -112,7 +125,11 @@ async def extract_text_from_zip(file_bytes: bytes) -> dict[str, str]:
 
 
 def smart_truncate(text: str, max_chars: int = 100_000) -> str:
-    """Skróć długi tekst zachowując początek i koniec."""
+    """Skróć długi tekst zachowując 40% początku i 40% końca.
+
+    :param text: Wejściowy tekst.
+    :param max_chars: Maksymalna liczba znaków po skróceniu.
+    """
     if len(text) <= max_chars:
         return text
     head = int(max_chars * 0.4)
@@ -126,7 +143,10 @@ def smart_truncate(text: str, max_chars: int = 100_000) -> str:
 
 
 def detect_file_type(filename: str) -> str:
-    """Zwróć kategorię pliku na podstawie rozszerzenia."""
+    """Zwróć kategorię pliku: image/pdf/docx/zip/text/unknown.
+
+    :param filename: Nazwa pliku do sklasyfikowania.
+    """
     suffix = Path(filename).suffix.lower()
     if suffix in {".jpg", ".jpeg", ".png"}:
         return "image"
