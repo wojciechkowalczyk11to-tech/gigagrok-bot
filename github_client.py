@@ -57,6 +57,8 @@ class GitHubClient:
     async def read_file(self, repo_path: Path, file_path: str) -> str:
         """Odczytaj plik z repo."""
         full_path = self._resolve_repo_file(repo_path, file_path)
+        if not full_path.is_file():
+            raise FileNotFoundError("Podana ścieżka nie wskazuje na plik.")
         if full_path.stat().st_size > MAX_READ_SIZE_BYTES:
             raise ValueError("Plik jest za duży (limit: 1MB).")
         return full_path.read_text(encoding="utf-8")
@@ -158,7 +160,10 @@ class GitHubClient:
     def _owner_repo_from_url(repo_url: str) -> tuple[str, str]:
         if repo_url.startswith("git@"):
             _, rest = repo_url.split(":", 1)
-            owner, repo = rest.split("/", 1)
+            parts = [part for part in rest.split("/") if part]
+            if len(parts) < 2:
+                raise ValueError("Nieprawidłowy URL repozytorium.")
+            owner, repo = parts[0], parts[1]
             return owner, repo.removesuffix(".git")
 
         parsed = urlparse(repo_url)
