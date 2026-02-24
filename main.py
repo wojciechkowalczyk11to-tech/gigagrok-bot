@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import logging
-import sys
+import signal
+import traceback
 
 import structlog
-from telegram.ext import Application, CommandHandler, MessageHandler, filters
+from telegram import Update
+from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
 
 from config import settings
 from db import init_db
@@ -74,6 +76,29 @@ async def post_shutdown(application: Application) -> None:  # type: ignore[type-
 
 
 # ---------------------------------------------------------------------------
+# Global error handler
+# ---------------------------------------------------------------------------
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Łap wszystkie nieobsłużone wyjątki — user widzi ładny komunikat, nie traceback."""
+    logger.error(
+        "unhandled_exception",
+        error=str(context.error),
+        traceback=traceback.format_exception(
+            type(context.error), context.error, context.error.__traceback__
+        )
+        if context.error
+        else [],
+    )
+    if isinstance(update, Update) and update.effective_message:
+        try:
+            await update.effective_message.reply_text(
+                "❌ Wystąpił nieoczekiwany błąd. Spróbuj ponownie."
+            )
+        except Exception:
+            logger.exception("error_handler_reply_failed")
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 def main() -> None:
@@ -92,6 +117,9 @@ def main() -> None:
         .post_shutdown(post_shutdown)
         .build()
     )
+
+    # Global error handler
+    app.add_error_handler(error_handler)
 
     # Handlers
     app.add_handler(CommandHandler("start", start_command))
@@ -117,6 +145,13 @@ def main() -> None:
     # Webhook
     webhook_url = f"{settings.webhook_url}/{settings.webhook_path}"
     logger.info("starting_webhook", url=webhook_url, port=settings.webhook_port)
+
+    # Graceful shutdown on SIGTERM (e.g. systemd stop)
+    def _sigterm_handler(signum: int, frame: object) -> None:
+        logger.info("sigterm_received")
+        app.stop_running()
+
+    signal.signal(signal.SIGTERM, _sigterm_handler)
 
     try:
         app.run_webhook(

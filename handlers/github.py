@@ -10,7 +10,7 @@ from telegram.ext import ContextTypes
 
 from config import settings
 from github_client import GitHubClient
-from utils import check_access
+from utils import check_access, escape_html
 
 logger = structlog.get_logger(__name__)
 
@@ -42,7 +42,7 @@ async def github_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     context.user_data[_PENDING_FILE_KEY] = f"### {file_path}\n{content}"
     logger.info("github_file_attached", user_id=update.effective_user.id, file=file_path)
     await update.message.reply_text(
-        f"✅ Dodano <code>{file_path}</code> do następnego zapytania.",
+        f"✅ Dodano <code>{escape_html(file_path)}</code> do następnego zapytania.",
         parse_mode="HTML",
     )
 
@@ -82,4 +82,4 @@ async def workspace_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         return
 
     logger.info("workspace_file_written", user_id=update.effective_user.id, file=file_path)
-    await update.message.reply_text(f"✅ Zapisano plik: <code>{file_path}</code>", parse_mode="HTML")
+    await update.message.reply_text(f"✅ Zapisano plik: <code>{escape_html(file_path)}</code>", parse_mode="HTML")
