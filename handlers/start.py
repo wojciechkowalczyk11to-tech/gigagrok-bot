@@ -53,28 +53,29 @@ _HELP_TEXT = (
     "🎤 Wyślij voice/audio → auto-transkrypcja + odpowiedź Grok\n"
     "\n"
     "⚡ /fast &lt;tekst&gt; → szybka odpowiedź bez reasoning\n"
-    "🧠 /think &lt;tekst&gt; → deep reasoning mode\n"
     "🔍 /websearch &lt;query&gt; → szukaj w internecie\n"
     "🐦 /xsearch &lt;query&gt; → szukaj na X/Twitter\n"
-    "💻 /code &lt;prompt&gt; → generuj i uruchom kod\n"
-    "🔬 /analyze &lt;tekst&gt; → głęboka analiza\n"
     "🖼 /image &lt;prompt&gt; (odpowiedz na zdjęcie) → analiza obrazu\n"
     "📎 /file &lt;prompt&gt; (odpowiedz na plik) → analiza pliku\n"
     "🚀 /gigagrok &lt;prompt&gt; → FULL POWER mode\n"
     "\n"
     "⚙️ <b>Ustawienia:</b>\n"
-    "/system &lt;prompt&gt; → ustaw system prompt\n"
-    "/clear → wyczyść historię\n"
-    "/stats → statystyki użycia\n"
     "/voice → toggle odpowiedzi głosowych\n"
     "\n"
     "💡 Wskazówka: zwykłe wysłanie zdjęcia lub dokumentu uruchamia analizę automatycznie.\n"
     "\n"
     "📦 /collection → zarządzaj bazą wiedzy\n"
-    "📥 /export → eksportuj historię\n"
     "\n"
     "🐙 /github &lt;plik&gt; → odczytaj plik z workspace i dodaj do następnego pytania\n"
     "🛠 /workspace write &lt;plik&gt; → zapisz treść z wiadomości-reply do pliku"
+)
+
+_HELP_ADMIN_SECTION = (
+    "\n\n"
+    "👑 <b>Admin:</b>\n"
+    "/users → lista dozwolonych użytkowników\n"
+    "/adduser &lt;id&gt; → dodaj użytkownika\n"
+    "/removeuser &lt;id&gt; → usuń użytkownika"
 )
 
 
@@ -88,4 +89,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     user_id = update.effective_user.id
 
     logger.info("help_command", user_id=user_id)
-    await update.message.reply_text(_HELP_TEXT, parse_mode="HTML")
+    text = _HELP_TEXT
+    if settings.is_admin(user_id):
+        text += _HELP_ADMIN_SECTION
+    await update.message.reply_text(text, parse_mode="HTML")

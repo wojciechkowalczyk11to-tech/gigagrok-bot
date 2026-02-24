@@ -14,6 +14,7 @@ logger = structlog.get_logger(__name__)
 # Retry settings
 _MAX_RETRIES: int = 3
 _RETRY_DELAYS: tuple[float, ...] = (1.0, 2.0, 4.0)
+_RATE_LIMIT_DELAY: float = 5.0
 
 
 class GrokClient:
@@ -28,6 +29,7 @@ class GrokClient:
                 "Authorization": f"Bearer {api_key}",
             },
         )
+        self._semaphore = asyncio.Semaphore(5)
 
     # ------------------------------------------------------------------
     # Streaming
@@ -69,71 +71,82 @@ class GrokClient:
         last_error: Exception | None = None
         for attempt in range(_MAX_RETRIES):
             try:
-                async with self._client.stream(
-                    "POST",
-                    f"{self._base_url}/chat/completions",
-                    json=body,
-                ) as response:
-                    if response.status_code != 200:
-                        error_body = await response.aread()
-                        raise httpx.HTTPStatusError(
-                            f"HTTP {response.status_code}: {error_body.decode(errors='replace')}",
-                            request=response.request,
-                            response=response,
-                        )
-
-                    async for line in response.aiter_lines():
-                        line = line.strip()
-                        if not line or not line.startswith("data: "):
-                            continue
-
-                        payload = line[6:]  # strip "data: "
-                        if payload == "[DONE]":
-                            break
-
-                        try:
-                            chunk = json.loads(payload)
-                        except json.JSONDecodeError:
-                            continue
-
-                        choices = chunk.get("choices", [])
-                        if not choices:
-                            continue
-
-                        choice = choices[0]
-                        delta = choice.get("delta", {})
-
-                        # Reasoning tokens come first
-                        if "reasoning_content" in delta and delta["reasoning_content"]:
-                            yield ("reasoning", delta["reasoning_content"])
-
-                        tool_calls = delta.get("tool_calls")
-                        if isinstance(tool_calls, list):
-                            for tool_call in tool_calls:
-                                if not isinstance(tool_call, dict):
-                                    continue
-                                function_data = tool_call.get("function", {})
-                                if not isinstance(function_data, dict):
-                                    continue
-                                tool_name = function_data.get("name")
-                                if isinstance(tool_name, str) and tool_name:
-                                    yield ("tool_use", tool_name)
-
-                        if "content" in delta and delta["content"]:
-                            yield ("content", delta["content"])
-
-                        # Usage in final chunk
-                        usage_raw = chunk.get("usage")
-                        if usage_raw:
-                            details = usage_raw.get("completion_tokens_details", {})
-                            yield (
-                                "done",
-                                {
-                                    "prompt_tokens": usage_raw.get("prompt_tokens", 0),
-                                    "completion_tokens": usage_raw.get("completion_tokens", 0),
-                                    "reasoning_tokens": details.get("reasoning_tokens", 0),
-                                },
+                async with self._semaphore:
+                    async with self._client.stream(
+                        "POST",
+                        f"{self._base_url}/chat/completions",
+                        json=body,
+                    ) as response:
+                        if response.status_code == 429:
+                            error_body = await response.aread()
+                            logger.warning(
+                                "grok_rate_limited",
+                                attempt=attempt + 1,
+                                delay=_RATE_LIMIT_DELAY,
+                                body=error_body.decode(errors="replace")[:200],
                             )
+                            await asyncio.sleep(_RATE_LIMIT_DELAY)
+                            continue
+                        if response.status_code != 200:
+                            error_body = await response.aread()
+                            raise httpx.HTTPStatusError(
+                                f"HTTP {response.status_code}: {error_body.decode(errors='replace')}",
+                                request=response.request,
+                                response=response,
+                            )
+
+                        async for line in response.aiter_lines():
+                            line = line.strip()
+                            if not line or not line.startswith("data: "):
+                                continue
+
+                            payload = line[6:]  # strip "data: "
+                            if payload == "[DONE]":
+                                break
+
+                            try:
+                                chunk = json.loads(payload)
+                            except json.JSONDecodeError:
+                                continue
+
+                            choices = chunk.get("choices", [])
+                            if not choices:
+                                continue
+
+                            choice = choices[0]
+                            delta = choice.get("delta", {})
+
+                            # Reasoning tokens come first
+                            if "reasoning_content" in delta and delta["reasoning_content"]:
+                                yield ("reasoning", delta["reasoning_content"])
+
+                            tool_calls = delta.get("tool_calls")
+                            if isinstance(tool_calls, list):
+                                for tool_call in tool_calls:
+                                    if not isinstance(tool_call, dict):
+                                        continue
+                                    function_data = tool_call.get("function", {})
+                                    if not isinstance(function_data, dict):
+                                        continue
+                                    tool_name = function_data.get("name")
+                                    if isinstance(tool_name, str) and tool_name:
+                                        yield ("tool_use", tool_name)
+
+                            if "content" in delta and delta["content"]:
+                                yield ("content", delta["content"])
+
+                            # Usage in final chunk
+                            usage_raw = chunk.get("usage")
+                            if usage_raw:
+                                details = usage_raw.get("completion_tokens_details", {})
+                                yield (
+                                    "done",
+                                    {
+                                        "prompt_tokens": usage_raw.get("prompt_tokens", 0),
+                                        "completion_tokens": usage_raw.get("completion_tokens", 0),
+                                        "reasoning_tokens": details.get("reasoning_tokens", 0),
+                                    },
+                                )
                 # Successful — exit retry loop
                 return
 
@@ -186,10 +199,19 @@ class GrokClient:
         last_error: Exception | None = None
         for attempt in range(_MAX_RETRIES):
             try:
-                resp = await self._client.post(
-                    f"{self._base_url}/chat/completions",
-                    json=body,
-                )
+                async with self._semaphore:
+                    resp = await self._client.post(
+                        f"{self._base_url}/chat/completions",
+                        json=body,
+                    )
+                if resp.status_code == 429:
+                    logger.warning(
+                        "grok_rate_limited",
+                        attempt=attempt + 1,
+                        delay=_RATE_LIMIT_DELAY,
+                    )
+                    await asyncio.sleep(_RATE_LIMIT_DELAY)
+                    continue
                 resp.raise_for_status()
                 return resp.json()  # type: ignore[no-any-return]
             except Exception as exc:
