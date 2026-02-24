@@ -70,6 +70,7 @@ class GrokClient:
 
         last_error: Exception | None = None
         for attempt in range(_MAX_RETRIES):
+            rate_limited = False
             try:
                 async with self._semaphore:
                     async with self._client.stream(
@@ -78,77 +79,80 @@ class GrokClient:
                         json=body,
                     ) as response:
                         if response.status_code == 429:
-                            error_body = await response.aread()
-                            logger.warning(
-                                "grok_rate_limited",
-                                attempt=attempt + 1,
-                                delay=_RATE_LIMIT_DELAY,
-                                body=error_body.decode(errors="replace")[:200],
-                            )
-                            await asyncio.sleep(_RATE_LIMIT_DELAY)
-                            continue
-                        if response.status_code != 200:
+                            await response.aread()
+                            rate_limited = True
+                        elif response.status_code != 200:
                             error_body = await response.aread()
                             raise httpx.HTTPStatusError(
                                 f"HTTP {response.status_code}: {error_body.decode(errors='replace')}",
                                 request=response.request,
                                 response=response,
                             )
+                        else:
+                            async for line in response.aiter_lines():
+                                line = line.strip()
+                                if not line or not line.startswith("data: "):
+                                    continue
 
-                        async for line in response.aiter_lines():
-                            line = line.strip()
-                            if not line or not line.startswith("data: "):
-                                continue
+                                payload = line[6:]  # strip "data: "
+                                if payload == "[DONE]":
+                                    break
 
-                            payload = line[6:]  # strip "data: "
-                            if payload == "[DONE]":
-                                break
+                                try:
+                                    chunk = json.loads(payload)
+                                except json.JSONDecodeError:
+                                    continue
 
-                            try:
-                                chunk = json.loads(payload)
-                            except json.JSONDecodeError:
-                                continue
+                                choices = chunk.get("choices", [])
+                                if not choices:
+                                    continue
 
-                            choices = chunk.get("choices", [])
-                            if not choices:
-                                continue
+                                choice = choices[0]
+                                delta = choice.get("delta", {})
 
-                            choice = choices[0]
-                            delta = choice.get("delta", {})
+                                # Reasoning tokens come first
+                                if "reasoning_content" in delta and delta["reasoning_content"]:
+                                    yield ("reasoning", delta["reasoning_content"])
 
-                            # Reasoning tokens come first
-                            if "reasoning_content" in delta and delta["reasoning_content"]:
-                                yield ("reasoning", delta["reasoning_content"])
+                                tool_calls = delta.get("tool_calls")
+                                if isinstance(tool_calls, list):
+                                    for tool_call in tool_calls:
+                                        if not isinstance(tool_call, dict):
+                                            continue
+                                        function_data = tool_call.get("function", {})
+                                        if not isinstance(function_data, dict):
+                                            continue
+                                        tool_name = function_data.get("name")
+                                        if isinstance(tool_name, str) and tool_name:
+                                            yield ("tool_use", tool_name)
 
-                            tool_calls = delta.get("tool_calls")
-                            if isinstance(tool_calls, list):
-                                for tool_call in tool_calls:
-                                    if not isinstance(tool_call, dict):
-                                        continue
-                                    function_data = tool_call.get("function", {})
-                                    if not isinstance(function_data, dict):
-                                        continue
-                                    tool_name = function_data.get("name")
-                                    if isinstance(tool_name, str) and tool_name:
-                                        yield ("tool_use", tool_name)
+                                if "content" in delta and delta["content"]:
+                                    yield ("content", delta["content"])
 
-                            if "content" in delta and delta["content"]:
-                                yield ("content", delta["content"])
+                                # Usage in final chunk
+                                usage_raw = chunk.get("usage")
+                                if usage_raw:
+                                    details = usage_raw.get("completion_tokens_details", {})
+                                    yield (
+                                        "done",
+                                        {
+                                            "prompt_tokens": usage_raw.get("prompt_tokens", 0),
+                                            "completion_tokens": usage_raw.get("completion_tokens", 0),
+                                            "reasoning_tokens": details.get("reasoning_tokens", 0),
+                                        },
+                                    )
+                            # Successful — exit retry loop
+                            return
 
-                            # Usage in final chunk
-                            usage_raw = chunk.get("usage")
-                            if usage_raw:
-                                details = usage_raw.get("completion_tokens_details", {})
-                                yield (
-                                    "done",
-                                    {
-                                        "prompt_tokens": usage_raw.get("prompt_tokens", 0),
-                                        "completion_tokens": usage_raw.get("completion_tokens", 0),
-                                        "reasoning_tokens": details.get("reasoning_tokens", 0),
-                                    },
-                                )
-                # Successful — exit retry loop
-                return
+                # Semaphore released — handle 429 retry outside
+                if rate_limited:
+                    logger.warning(
+                        "grok_rate_limited",
+                        attempt=attempt + 1,
+                        delay=_RATE_LIMIT_DELAY,
+                    )
+                    await asyncio.sleep(_RATE_LIMIT_DELAY)
+                    continue
 
             except Exception as exc:
                 last_error = exc
@@ -166,6 +170,7 @@ class GrokClient:
         if last_error:
             logger.error("grok_stream_failed", error=str(last_error))
             raise last_error
+        raise RuntimeError("xAI API rate limit — wszystkie próby wyczerpane")
 
     # ------------------------------------------------------------------
     # Non-streaming
@@ -204,6 +209,7 @@ class GrokClient:
                         f"{self._base_url}/chat/completions",
                         json=body,
                     )
+                # Semaphore released — handle 429 outside
                 if resp.status_code == 429:
                     logger.warning(
                         "grok_rate_limited",
