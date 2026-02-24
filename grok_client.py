@@ -252,10 +252,10 @@ class GrokClient:
         Raises on HTTP errors after retries.
         """
         body: dict[str, Any] = {
-            "collection_id": collection_id,
             "query": query,
-            "max_num_results": max_results,
+            "source": {"collection_ids": [collection_id]},
         }
+
         last_error: Exception | None = None
         for attempt in range(_MAX_RETRIES):
             try:
@@ -264,6 +264,7 @@ class GrokClient:
                         f"{self._base_url}/documents/search",
                         json=body,
                     )
+
                 if resp.status_code == 429:
                     logger.warning(
                         "collection_search_rate_limited",
@@ -272,9 +273,24 @@ class GrokClient:
                     )
                     await asyncio.sleep(_RATE_LIMIT_DELAY)
                     continue
+
                 resp.raise_for_status()
                 data = resp.json()
-                return data.get("results", data.get("data", []))  # type: ignore[no-any-return]
+
+                results: list[dict[str, Any]]
+                if isinstance(data, list):
+                    results = [r for r in data if isinstance(r, dict)]
+                elif isinstance(data, dict):
+                    if isinstance(data.get("results"), list):
+                        results = [r for r in data["results"] if isinstance(r, dict)]
+                    elif isinstance(data.get("data"), list):
+                        results = [r for r in data["data"] if isinstance(r, dict)]
+                    else:
+                        results = []
+                else:
+                    results = []
+
+                return results[:max_results]
             except Exception as exc:
                 last_error = exc
                 if attempt < _MAX_RETRIES - 1:
@@ -286,6 +302,7 @@ class GrokClient:
                         error=str(exc),
                     )
                     await asyncio.sleep(delay)
+                    continue
 
         if last_error:
             logger.error("collection_search_failed", error=str(last_error))

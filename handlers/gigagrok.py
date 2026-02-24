@@ -1,4 +1,4 @@
-"""GigaGrok full-power handler (/gigagrok) — collection-first, staged approach."""
+"""GigaGrok full-power handler (/gigagrok) — web/X/code tools."""
 
 from __future__ import annotations
 
