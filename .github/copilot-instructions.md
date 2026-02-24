@@ -106,3 +106,31 @@ grok_client.py ma parametr search: dict | None w chat_stream() i chat().
 - NIE twórz testów jednostkowych — smoke test ręczny
 - NIE dodawaj features spoza aktualnej fazy
 - NIE zmieniaj .env — to plik usera, zmieniaj .env.example
+
+## Debug: HTTP 422 / tools schema / webhook port
+
+### 1) Najczęstszy błąd: `HTTP 422 ... tools[0].type: unknown variant 'file_search'`
+**Objaw (z logów):**
+- `tools[0].type: unknown variant 'file_search', expected 'function' or 'live_search'`
+
+**Co to znaczy:**
+- Aktualny endpoint /chat/completions w tym projekcie **nie akceptuje** toola `type: "file_search"`.
+- Ten projekt (w obecnej implementacji) rozumie jedynie:
+  - `tools[].type = "function"` (function calling w stylu OpenAI),
+  - albo legacy `live_search` (jeśli w ogóle używane).
+
+**Reguła (twarda):**
+- W kodzie, który wywołuje `/chat/completions`, **NIE WOLNO** dodawać `{"type":"file_search"}` ani `{"type":"collections_search"}` do `tools`.
+- Jeśli potrzebujesz kolekcji: rób to deterministycznie przez REST `POST /documents/search` i wstrzyknij wynik do promptu.
+
+**Fix (zawsze bezpieczny):**
+- Usuń `file_search` z tools w /gigagrok.
+- Zrób osobną komendę `/collectionsearch`, która:
+  1) robi `POST https://api.x.ai/v1/documents/search`,
+  2) zwraca TOP wyniki,
+  3) opcjonalnie zapisuje cache per-user do DB.
+
+### 2) Rozpoznanie problemu w 30 sekund (na VM)
+Uruchom:
+```bash
+tail -n 200 /tmp/gigagrok.log | sed -n '1,200p'
