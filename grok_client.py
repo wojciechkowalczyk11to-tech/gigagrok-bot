@@ -35,7 +35,7 @@ class GrokClient:
     # ------------------------------------------------------------------
     async def chat_stream(
         self,
-        messages: list[dict[str, str]],
+        messages: list[dict[str, Any]],
         model: str,
         max_tokens: int = 16000,
         reasoning_effort: str | None = None,
@@ -160,7 +160,7 @@ class GrokClient:
     # ------------------------------------------------------------------
     async def chat(
         self,
-        messages: list[dict[str, str]],
+        messages: list[dict[str, Any]],
         model: str,
         max_tokens: int = 16000,
         reasoning_effort: str | None = None,
