@@ -109,6 +109,28 @@ def format_footer(
     )
 
 
+def format_gigagrok_footer(
+    model: str,
+    tokens_in: int,
+    tokens_out: int,
+    reasoning_tokens: int,
+    cost_usd: float,
+    elapsed_seconds: float,
+    tools_used: list[str],
+) -> str:
+    """Return extended footer for /gigagrok responses."""
+    tools_label = ", ".join(tools_used) if tools_used else "brak"
+    return (
+        f"🚀 GIGAGROK | {model} | "
+        f"📥 {format_number(tokens_in)} "
+        f"📤 {format_number(tokens_out)} "
+        f"🧠 {format_number(reasoning_tokens)} | "
+        f"🔧 {tools_label} | "
+        f"💰 ${cost_usd:.4f} | "
+        f"⏱ {elapsed_seconds:.1f}s"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Number formatting
 # ---------------------------------------------------------------------------

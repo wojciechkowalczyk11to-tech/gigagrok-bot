@@ -15,6 +15,7 @@ from handlers.admin import adduser_command, removeuser_command, users_command
 from handlers.chat import handle_message, init_grok_client
 from handlers.collection import collection_command
 from handlers.file import file_command, handle_document
+from handlers.gigagrok import gigagrok_command
 from handlers.image import handle_photo, image_command
 from handlers.mode import fast_command
 from handlers.search import websearch_command, xsearch_command
@@ -95,6 +96,7 @@ def main() -> None:
     app.add_handler(CommandHandler("adduser", adduser_command))
     app.add_handler(CommandHandler("removeuser", removeuser_command))
     app.add_handler(CommandHandler("collection", collection_command))
+    app.add_handler(CommandHandler("gigagrok", gigagrok_command))
     app.add_handler(CommandHandler("voice", voice_toggle))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
