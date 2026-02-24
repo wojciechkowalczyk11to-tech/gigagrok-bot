@@ -6,9 +6,10 @@ import logging
 import signal
 import traceback
 
+import httpx
 import structlog
 from telegram import Update
-from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
+from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes, MessageHandler, filters
 
 from config import settings
 from db import init_db
@@ -17,13 +18,14 @@ from healthcheck import start_healthcheck_server
 from handlers.admin import adduser_command, removeuser_command, users_command
 from handlers.chat import handle_message, init_grok_client
 from handlers.collection import collection_command
+from handlers.conversation import clear_command, profile_command, stats_command, system_command, think_command
 from handlers.file import file_command, handle_document
 from handlers.gigagrok import gigagrok_command
 from handlers.github import github_command, workspace_command
 from handlers.image import handle_photo, image_command
 from handlers.mode import fast_command
 from handlers.search import websearch_command, xsearch_command
-from handlers.start import help_command, start_command
+from handlers.start import help_callback, help_command, start_command
 from handlers.voice import handle_voice, voice_toggle
 
 # ---------------------------------------------------------------------------
@@ -59,6 +61,7 @@ async def post_init(application: Application) -> None:  # type: ignore[type-arg]
     grok = GrokClient(api_key=settings.xai_api_key, base_url=settings.xai_base_url)
     init_grok_client(grok)
     application.bot_data["grok_client"] = grok
+    application.bot_data["http_client"] = httpx.AsyncClient(timeout=httpx.Timeout(120.0))
 
     logger.info(
         "bot_started",
@@ -72,6 +75,9 @@ async def post_shutdown(application: Application) -> None:  # type: ignore[type-
     grok: GrokClient | None = application.bot_data.get("grok_client")
     if grok:
         await grok.close()
+    http_client: httpx.AsyncClient | None = application.bot_data.get("http_client")
+    if http_client:
+        await http_client.aclose()
     logger.info("bot_shutdown")
 
 
@@ -125,6 +131,11 @@ def main() -> None:
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("fast", fast_command))
+    app.add_handler(CommandHandler("think", think_command))
+    app.add_handler(CommandHandler("clear", clear_command))
+    app.add_handler(CommandHandler("stats", stats_command))
+    app.add_handler(CommandHandler("system", system_command))
+    app.add_handler(CommandHandler("profile", profile_command))
     app.add_handler(CommandHandler("websearch", websearch_command))
     app.add_handler(CommandHandler("xsearch", xsearch_command))
     app.add_handler(CommandHandler("image", image_command))
@@ -137,6 +148,7 @@ def main() -> None:
     app.add_handler(CommandHandler("github", github_command))
     app.add_handler(CommandHandler("workspace", workspace_command))
     app.add_handler(CommandHandler("voice", voice_toggle))
+    app.add_handler(CallbackQueryHandler(help_callback, pattern=r"^help_"))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
     app.add_handler(MessageHandler(filters.VOICE | filters.AUDIO, handle_voice))

@@ -24,7 +24,7 @@ from db import (
     update_daily_stats,
 )
 from grok_client import GrokClient
-from utils import check_access, escape_html, format_footer, get_current_date, split_message
+from utils import check_access, escape_html, format_footer, get_current_date, markdown_to_telegram_html, split_message
 
 logger = structlog.get_logger(__name__)
 
@@ -44,6 +44,7 @@ async def _transcribe_with_groq(
     file_bytes: bytes,
     filename: str,
     mime_type: str,
+    http_client: httpx.AsyncClient | None = None,
 ) -> str:
     """Transcribe audio bytes using Groq Whisper API."""
     if not settings.groq_api_key:
@@ -55,7 +56,9 @@ async def _transcribe_with_groq(
     }
     data = {"model": _WHISPER_MODEL}
 
-    async with httpx.AsyncClient(timeout=httpx.Timeout(120.0)) as client:
+    client = http_client or httpx.AsyncClient(timeout=httpx.Timeout(120.0))
+    should_close = http_client is None
+    try:
         response = await client.post(_GROQ_STT_URL, headers=headers, files=files, data=data)
         response.raise_for_status()
         payload = response.json()
@@ -63,6 +66,9 @@ async def _transcribe_with_groq(
         if not isinstance(text, str) or not text.strip():
             raise RuntimeError("Brak tekstu w odpowiedzi STT.")
         return text.strip()
+    finally:
+        if should_close:
+            await client.aclose()
 
 
 def _text_to_ogg_opus(text: str) -> bytes:
@@ -141,7 +147,8 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         return
 
     try:
-        transcript = await _transcribe_with_groq(file_bytes, filename, mime_type)
+        shared_http: httpx.AsyncClient | None = context.application.bot_data.get("http_client")
+        transcript = await _transcribe_with_groq(file_bytes, filename, mime_type, http_client=shared_http)
     except Exception as exc:
         logger.error("voice_transcription_failed", user_id=user_id, error=str(exc))
         await update.message.reply_text("❌ Nie udało się wykonać transkrypcji.")
@@ -210,7 +217,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         elapsed,
     )
 
-    final_text = f"{escape_html(full_content)}\n\n<code>{escape_html(footer)}</code>"
+    final_text = f"{markdown_to_telegram_html(full_content)}\n\n<code>{escape_html(footer)}</code>"
     parts = split_message(final_text, max_length=4000)
     try:
         await status.edit_text(parts[0], parse_mode="HTML")

@@ -1,4 +1,4 @@
-"""Collection handlers (/collection) for xAI Collections API with local fallback."""
+"""Collection handlers (/collection) for local SQLite collections."""
 
 from __future__ import annotations
 
@@ -18,7 +18,6 @@ from db import (
     search_local_collection_documents,
 )
 from file_utils import detect_file_type, extract_text_from_docx, extract_text_from_pdf, extract_text_from_zip
-from grok_client import GrokClient
 from utils import check_access, escape_html
 
 logger = structlog.get_logger(__name__)
@@ -34,16 +33,6 @@ def _plural_pl(count: int, form_1: str, form_2_4: str, form_other: str) -> str:
     if mod10 in (2, 3, 4) and mod100 not in (12, 13, 14):
         return form_2_4
     return form_other
-
-
-def _parse_local_collection_id(collection_id: str) -> int | None:
-    """Parse ``local_<id>`` collection format."""
-    if not collection_id.startswith("local_"):
-        return None
-    value = collection_id[6:].strip()
-    if not value.isdigit():
-        return None
-    return int(value)
 
 
 def _decode_text_bytes(data: bytes) -> str:
@@ -74,46 +63,25 @@ async def _extract_document_text(filename: str, file_bytes: bytes) -> str | None
     return None
 
 
-async def _show_menu(update: Update, grok: GrokClient) -> None:
-    """Show collections list and command help."""
+async def _show_menu(update: Update) -> None:
+    """Show local collections list and command help."""
     if not update.message:
         return
 
+    local_items = await list_local_collections()
     collections: list[dict[str, Any]] = []
-    using_local = False
-    try:
-        remote_collections = await grok.list_collections()
-        for collection in remote_collections:
-            collection_id = str(collection.get("id", ""))
-            if not collection_id:
-                continue
-            try:
-                docs = await grok.list_collection_documents(collection_id)
-                doc_count = len(docs)
-            except Exception:
-                doc_count = 0
-            collections.append(
-                {
-                    "id": collection_id,
-                    "name": str(collection.get("name", "Bez nazwy")),
-                    "document_count": doc_count,
-                }
-            )
-    except Exception:
-        using_local = True
-        local_items = await list_local_collections()
-        for item in local_items:
-            collections.append(
-                {
-                    "id": f"local_{int(item['id'])}",
-                    "name": str(item["name"]),
-                    "document_count": int(item.get("document_count", 0)),
-                }
-            )
+    for item in local_items:
+        collections.append(
+            {
+                "id": f"local_{int(item['id'])}",
+                "name": str(item["name"]),
+                "document_count": int(item.get("document_count", 0)),
+            }
+        )
 
     count = len(collections)
     noun = _plural_pl(count, "kolekcja", "kolekcje", "kolekcji")
-    lines: list[str] = [f"📚 <b>Kolekcje</b> ({count} {noun})", ""]
+    lines: list[str] = [f"📚 <b>Kolekcje lokalne</b> ({count} {noun})", ""]
     for idx, item in enumerate(collections, start=1):
         document_count = int(item.get("document_count", 0))
         doc_noun = _plural_pl(document_count, "dokument", "dokumenty", "dokumentów")
@@ -124,10 +92,18 @@ async def _show_menu(update: Update, grok: GrokClient) -> None:
         )
     if not collections:
         lines.append("Brak kolekcji.")
+
+    if settings.xai_collection_id:
+        lines.extend([
+            "",
+            f"🌐 <b>Kolekcja xAI:</b> <code>{escape_html(settings.xai_collection_id)}</code>",
+            "  (zarządzana ręcznie na stronie xAI, używana automatycznie w /gigagrok)",
+        ])
+
     lines.extend(
         [
             "",
-            "Komendy:",
+            "Komendy (lokalne kolekcje):",
             "/collection create &lt;nazwa&gt;",
             "/collection add &lt;id&gt; (reply na plik)",
             "/collection search &lt;id&gt; &lt;query&gt;",
@@ -135,46 +111,47 @@ async def _show_menu(update: Update, grok: GrokClient) -> None:
             "/collection delete &lt;id&gt;",
         ]
     )
-    if using_local:
-        lines.extend(["", "ℹ️ Tryb fallback: lokalne kolekcje SQLite (FTS5)."])
     await update.message.reply_text("\n".join(lines), parse_mode="HTML")
 
 
-async def _create_collection(update: Update, grok: GrokClient, name: str) -> None:
-    """Create collection in xAI, fallback to local collection on failure."""
+async def _create_collection(update: Update, name: str) -> None:
+    """Create a local collection."""
     if not update.message:
         return
-
-    try:
-        response = await grok.create_collection(name)
-        collection_id = response.get("id")
-        if collection_id:
-            await update.message.reply_text(
-                f"✅ Utworzono kolekcję: <code>{escape_html(str(collection_id))}</code>",
-                parse_mode="HTML",
-            )
-            return
-    except Exception:
-        logger.exception("create_remote_collection_failed", name=name)
 
     local_id = await create_local_collection(name)
     if local_id is None:
         await update.message.reply_text("❌ Nie udało się utworzyć kolekcji.")
         return
     await update.message.reply_text(
-        f"✅ Utworzono lokalną kolekcję fallback: <code>local_{local_id}</code>",
+        f"✅ Utworzono lokalną kolekcję: <code>local_{local_id}</code>",
         parse_mode="HTML",
     )
 
 
-async def _add_document(update: Update, context: ContextTypes.DEFAULT_TYPE, grok: GrokClient, collection_id: str) -> None:
-    """Upload document to collection (remote or local fallback)."""
+def _parse_local_collection_id(collection_id: str) -> int | None:
+    """Parse ``local_<id>`` collection format."""
+    if not collection_id.startswith("local_"):
+        return None
+    value = collection_id[6:].strip()
+    if not value.isdigit():
+        return None
+    return int(value)
+
+
+async def _add_document(update: Update, context: ContextTypes.DEFAULT_TYPE, collection_id: str) -> None:
+    """Upload document to a local collection."""
     if not update.message:
         return
 
     reply = update.message.reply_to_message
     if not reply or not reply.document:
         await update.message.reply_text("Użycie: odpowiedz /collection add <id> na wiadomość z plikiem.")
+        return
+
+    local_id = _parse_local_collection_id(collection_id)
+    if local_id is None:
+        await update.message.reply_text("❌ Podaj ID lokalnej kolekcji w formacie local_<id>.")
         return
 
     filename = reply.document.file_name or "plik"
@@ -186,157 +163,83 @@ async def _add_document(update: Update, context: ContextTypes.DEFAULT_TYPE, grok
         await update.message.reply_text("❌ Nie udało się pobrać pliku z Telegrama.")
         return
 
-    local_id = _parse_local_collection_id(collection_id)
-    if local_id is not None:
-        extracted = await _extract_document_text(filename, file_bytes)
-        if extracted is None:
-            await update.message.reply_text("❌ Lokalny fallback obsługuje: txt/md/pdf/docx/zip.")
-            return
-        if not extracted.strip():
-            await update.message.reply_text("❌ Nie udało się wyciągnąć treści z pliku.")
-            return
-        ok = await add_local_collection_document(local_id, filename, extracted)
-        if not ok:
-            await update.message.reply_text("❌ Nie udało się dodać dokumentu do lokalnej kolekcji.")
-            return
-        await update.message.reply_text("✅ Dodano dokument do lokalnej kolekcji.")
+    extracted = await _extract_document_text(filename, file_bytes)
+    if extracted is None:
+        await update.message.reply_text("❌ Obsługiwane formaty: txt/md/pdf/docx/zip.")
         return
-
-    try:
-        await grok.upload_collection_document(
-            collection_id,
-            filename,
-            file_bytes,
-            reply.document.mime_type or "application/octet-stream",
-        )
-        await update.message.reply_text("✅ Dodano dokument do kolekcji xAI.")
-    except Exception:
-        logger.exception("upload_remote_document_failed", collection_id=collection_id, filename=filename)
-        await update.message.reply_text(
-            "❌ Upload do xAI nie powiódł się. Jeśli Collections API jest niedostępne, użyj lokalnej kolekcji local_<id>."
-        )
+    if not extracted.strip():
+        await update.message.reply_text("❌ Nie udało się wyciągnąć treści z pliku.")
+        return
+    ok = await add_local_collection_document(local_id, filename, extracted)
+    if not ok:
+        await update.message.reply_text("❌ Nie udało się dodać dokumentu do kolekcji.")
+        return
+    await update.message.reply_text("✅ Dodano dokument do lokalnej kolekcji.")
 
 
-async def _list_documents(update: Update, grok: GrokClient, collection_id: str) -> None:
-    """List documents from collection."""
+async def _list_documents(update: Update, collection_id: str) -> None:
+    """List documents from a local collection."""
     if not update.message:
         return
 
     local_id = _parse_local_collection_id(collection_id)
-    if local_id is not None:
-        docs = await list_local_collection_documents(local_id)
-        if not docs:
-            await update.message.reply_text("📄 Brak dokumentów w tej lokalnej kolekcji.")
-            return
-        lines = [f"📄 <b>Dokumenty</b> w <code>{escape_html(collection_id)}</code>:", ""]
-        for idx, doc in enumerate(docs, start=1):
-            lines.append(f"{idx}. {escape_html(str(doc.get('filename', 'plik')))}")
-        await update.message.reply_text("\n".join(lines), parse_mode="HTML")
+    if local_id is None:
+        await update.message.reply_text("❌ Podaj ID lokalnej kolekcji w formacie local_<id>.")
         return
 
-    try:
-        docs = await grok.list_collection_documents(collection_id)
-    except Exception:
-        logger.exception("list_remote_documents_failed", collection_id=collection_id)
-        await update.message.reply_text("❌ Nie udało się pobrać dokumentów kolekcji.")
-        return
-
+    docs = await list_local_collection_documents(local_id)
     if not docs:
         await update.message.reply_text("📄 Brak dokumentów w tej kolekcji.")
         return
     lines = [f"📄 <b>Dokumenty</b> w <code>{escape_html(collection_id)}</code>:", ""]
     for idx, doc in enumerate(docs, start=1):
-        file_name = str(doc.get("filename") or doc.get("name") or doc.get("id") or "plik")
-        lines.append(f"{idx}. {escape_html(file_name)}")
+        lines.append(f"{idx}. {escape_html(str(doc.get('filename', 'plik')))}")
     await update.message.reply_text("\n".join(lines), parse_mode="HTML")
 
 
-async def _delete_collection(update: Update, grok: GrokClient, collection_id: str) -> None:
-    """Delete collection by ID."""
+async def _delete_collection(update: Update, collection_id: str) -> None:
+    """Delete a local collection by ID."""
     if not update.message:
         return
 
     local_id = _parse_local_collection_id(collection_id)
-    if local_id is not None:
-        removed = await delete_local_collection(local_id)
-        if removed <= 0:
-            await update.message.reply_text("ℹ️ Taka lokalna kolekcja nie istnieje.")
-            return
-        await update.message.reply_text("🗑️ Usunięto lokalną kolekcję.")
+    if local_id is None:
+        await update.message.reply_text("❌ Podaj ID lokalnej kolekcji w formacie local_<id>.")
         return
 
-    try:
-        ok = await grok.delete_collection(collection_id)
-    except Exception:
-        logger.exception("delete_remote_collection_failed", collection_id=collection_id)
-        await update.message.reply_text("❌ Nie udało się usunąć kolekcji xAI.")
+    removed = await delete_local_collection(local_id)
+    if removed <= 0:
+        await update.message.reply_text("ℹ️ Taka kolekcja nie istnieje.")
         return
-    if ok:
-        await update.message.reply_text("🗑️ Usunięto kolekcję xAI.")
-        return
-    await update.message.reply_text("❌ Nie udało się usunąć kolekcji.")
+    await update.message.reply_text("🗑️ Usunięto kolekcję.")
 
 
 async def _search_collection(
     update: Update,
-    grok: GrokClient,
     collection_id: str,
     query: str,
 ) -> None:
-    """Search collection via xAI tool or local fallback."""
+    """Search a local collection via FTS5 or LIKE fallback."""
     if not update.message:
         return
 
     local_id = _parse_local_collection_id(collection_id)
-    if local_id is not None:
-        results = await search_local_collection_documents(local_id, query)
-        if not results:
-            await update.message.reply_text("🔎 Brak wyników w lokalnej kolekcji.")
-            return
-        lines = [f"🔎 <b>Wyniki</b> dla: <i>{escape_html(query)}</i>", ""]
-        for idx, row in enumerate(results, start=1):
-            snippet = str(row.get("snippet", "")).strip() or "(brak podglądu)"
-            lines.append(
-                f"{idx}. <b>{escape_html(str(row.get('filename', 'plik')))}</b>\n"
-                f"{escape_html(snippet[:MAX_SNIPPET_DISPLAY_LENGTH])}"
-            )
-        await update.message.reply_text("\n\n".join(lines), parse_mode="HTML")
+    if local_id is None:
+        await update.message.reply_text("❌ Podaj ID lokalnej kolekcji w formacie local_<id>.")
         return
 
-    tool = {
-        "type": "function",
-        "function": {
-            "name": "collections_search",
-            "parameters": {"collection_ids": [collection_id]},
-        },
-    }
-    messages = [
-        {
-            "role": "system",
-            "content": "Odpowiedz na pytanie użytkownika używając danych z wskazanej kolekcji.",
-        },
-        {"role": "user", "content": query},
-    ]
-    try:
-        response = await grok.chat(
-            messages=messages,
-            model=settings.xai_model_reasoning,
-            max_tokens=settings.max_output_tokens,
-            reasoning_effort="medium",
-            tools=[tool],
+    results = await search_local_collection_documents(local_id, query)
+    if not results:
+        await update.message.reply_text("🔎 Brak wyników w kolekcji.")
+        return
+    lines = [f"🔎 <b>Wyniki</b> dla: <i>{escape_html(query)}</i>", ""]
+    for idx, row in enumerate(results, start=1):
+        snippet = str(row.get("snippet", "")).strip() or "(brak podglądu)"
+        lines.append(
+            f"{idx}. <b>{escape_html(str(row.get('filename', 'plik')))}</b>\n"
+            f"{escape_html(snippet[:MAX_SNIPPET_DISPLAY_LENGTH])}"
         )
-    except Exception:
-        logger.exception("remote_collection_search_failed", collection_id=collection_id)
-        await update.message.reply_text("❌ Wyszukiwanie w xAI Collections nie powiodło się.")
-        return
-
-    choices = response.get("choices", [])
-    message = choices[0].get("message", {}) if choices else {}
-    content = str(message.get("content") or "").strip()
-    if not content:
-        await update.message.reply_text("🔎 Brak odpowiedzi z wyszukiwania kolekcji.")
-        return
-    await update.message.reply_text(content)
+    await update.message.reply_text("\n\n".join(lines), parse_mode="HTML")
 
 
 async def collection_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -346,13 +249,8 @@ async def collection_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if not await check_access(update, settings):
         return
 
-    grok: GrokClient | None = context.application.bot_data.get("grok_client")
-    if grok is None:
-        await update.message.reply_text("❌ Klient Grok nie został zainicjalizowany.")
-        return
-
     if not context.args:
-        await _show_menu(update, grok)
+        await _show_menu(update)
         return
 
     action = context.args[0].lower().strip()
@@ -363,14 +261,14 @@ async def collection_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
         if not name:
             await update.message.reply_text("Użycie: /collection create <nazwa>")
             return
-        await _create_collection(update, grok, name)
+        await _create_collection(update, name)
         return
 
     if action == "add":
         if not args:
             await update.message.reply_text("Użycie: /collection add <id> (reply na plik)")
             return
-        await _add_document(update, context, grok, args[0].strip())
+        await _add_document(update, context, args[0].strip())
         return
 
     if action == "search":
@@ -379,21 +277,21 @@ async def collection_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
             return
         collection_id = args[0].strip()
         query = " ".join(args[1:]).strip()
-        await _search_collection(update, grok, collection_id, query)
+        await _search_collection(update, collection_id, query)
         return
 
     if action == "list":
         if not args:
             await update.message.reply_text("Użycie: /collection list <id>")
             return
-        await _list_documents(update, grok, args[0].strip())
+        await _list_documents(update, args[0].strip())
         return
 
     if action == "delete":
         if not args:
             await update.message.reply_text("Użycie: /collection delete <id>")
             return
-        await _delete_collection(update, grok, args[0].strip())
+        await _delete_collection(update, args[0].strip())
         return
 
     await update.message.reply_text(

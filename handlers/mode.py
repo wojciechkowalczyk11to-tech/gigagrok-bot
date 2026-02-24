@@ -12,7 +12,7 @@ from telegram.ext import ContextTypes
 from config import DEFAULT_SYSTEM_PROMPT, settings
 from db import calculate_cost, get_history, get_user_setting, save_message, update_daily_stats
 from grok_client import GrokClient
-from utils import check_access, escape_html, format_footer, get_current_date, split_message
+from utils import check_access, escape_html, format_footer, get_current_date, markdown_to_telegram_html, split_message
 
 logger = structlog.get_logger(__name__)
 
@@ -81,7 +81,7 @@ async def fast_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         elapsed,
     )
 
-    final_text = f"{escape_html(content)}\n\n<code>{escape_html(footer)}</code>"
+    final_text = f"{markdown_to_telegram_html(content)}\n\n<code>{escape_html(footer)}</code>"
     parts = split_message(final_text, max_length=4000)
 
     try:

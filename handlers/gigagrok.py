@@ -1,4 +1,4 @@
-"""GigaGrok full-power handler (/gigagrok)."""
+"""GigaGrok full-power handler (/gigagrok) — collection-first, staged approach."""
 
 from __future__ import annotations
 
@@ -10,15 +10,16 @@ from telegram import Message, Update
 from telegram.ext import ContextTypes
 
 from config import settings
-from db import calculate_cost, save_message, update_daily_stats
+from db import calculate_cost, get_history, save_message, update_daily_stats
 from file_utils import image_to_base64
 from grok_client import GrokClient
-from tools import TOOLS_ALL
+from tools import build_stage1_tools, build_stage2_tools
 from utils import (
     check_access,
     escape_html,
     format_gigagrok_footer,
     get_current_date,
+    markdown_to_telegram_html,
     split_message,
 )
 
@@ -27,7 +28,9 @@ logger = structlog.get_logger(__name__)
 _TOOL_STATUS: dict[str, str] = {
     "web_search": "🌐 Szukam w internecie...",
     "x_search": "🐦 Sprawdzam X/Twitter...",
+    "code_interpreter": "⚡ Uruchamiam kod...",
     "code_execution": "⚡ Uruchamiam kod...",
+    "file_search": "📚 Szukam w kolekcji...",
     "collections_search": "📚 Szukam w kolekcjach...",
 }
 
@@ -81,7 +84,13 @@ async def _build_user_message_content(
 
 
 async def gigagrok_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle /gigagrok <prompt> in full-power autonomous mode."""
+    """Handle /gigagrok <prompt> in full-power autonomous mode.
+
+    Guaranteed stage order:
+    STAGE 1: Collection search (via file_search with XAI_COLLECTION_ID)
+    STAGE 2: Web / X / Code tools
+    STAGE 3: Verify / final response
+    """
     if not update.effective_user or not update.message:
         return
     if not await check_access(update, settings):
@@ -101,57 +110,42 @@ async def gigagrok_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         await update.message.reply_text("❌ Klient Grok nie został zainicjalizowany.")
         return
 
-    collection_ids: list[str] = []
-    collection_names: list[str] = []
-    try:
-        collections = await grok.list_collections()
-        for collection in collections:
-            collection_id = str(collection.get("id") or "").strip()
-            if collection_id:
-                collection_ids.append(collection_id)
-                collection_names.append(str(collection.get("name") or collection_id))
-    except Exception:
-        logger.exception("gigagrok_list_collections_failed", user_id=user_id)
+    collection_id = settings.xai_collection_id
 
-    tools = list(TOOLS_ALL)
-    if collection_ids:
-        tools.append(
-            {
-                "type": "function",
-                "function": {
-                    "name": "collections_search",
-                    "parameters": {"collection_ids": collection_ids},
-                },
-            }
-        )
+    # Build tools for the combined request
+    tools: list[dict[str, Any]] = []
+    if collection_id:
+        tools.extend(build_stage1_tools(collection_id))
+    if settings.gigagrok_stage2_enabled:
+        tools.extend(build_stage2_tools())
 
-    collections_line = (
-        f"\nUser ma kolekcje: {', '.join(collection_names)}" if collection_names else ""
-    )
     system_prompt = (
         "Jesteś w trybie GIGAGROK — PEŁNA MOC.\n\n"
         "Masz dostęp do narzędzi:\n"
+        "📚 File Search — szukaj w bazie wiedzy użytkownika (PRIORYTET — szukaj tu NAJPIERW)\n"
         "🌐 Web Search — szukaj aktualnych informacji w internecie\n"
         "🐦 X Search — szukaj na X/Twitter\n"
-        "⚡ Code Execution — uruchamiaj kod w sandboxie\n"
-        "📚 Collections Search — szukaj w bazie wiedzy użytkownika\n\n"
+        "⚡ Code Interpreter — uruchamiaj kod w sandboxie\n\n"
         "STRATEGIA:\n"
-        "1. Myśl głęboko i planuj kroki.\n"
-        "2. Dobieraj narzędzia autonomicznie.\n"
-        "3. Łącz narzędzia w sekwencje gdy to poprawia jakość.\n"
-        "4. Daj kompletną, praktyczną odpowiedź.\n\n"
+        "1. ZAWSZE najpierw przeszukaj bazę wiedzy (file_search) — to priorytet.\n"
+        "2. Jeśli baza wiedzy nie wystarczy, użyj web/X search.\n"
+        "3. Użyj code interpreter gdy potrzebne obliczenia lub analiza.\n"
+        "4. Myśl głęboko, ale publikuj TYLKO wynik i wnioski.\n"
+        "5. Daj kompletną, praktyczną odpowiedź.\n\n"
         f"Aktualna data: {get_current_date()}"
-        f"{collections_line}"
     )
 
     user_content = await _build_user_message_content(context, reply, prompt)
-    messages: list[dict[str, Any]] = [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": user_content},
-    ]
+
+    # Include recent conversation context
+    history = await get_history(user_id, limit=settings.gigagrok_context_messages)
+    messages: list[dict[str, Any]] = [{"role": "system", "content": system_prompt}]
+    for msg in history:
+        messages.append({"role": msg["role"], "content": msg["content"]})
+    messages.append({"role": "user", "content": user_content})
 
     sent = await update.message.reply_text(
-        "🚀 <b>GIGAGROK MODE</b>\n🧠 Reasoning...",
+        "🚀 <b>GIGAGROK MODE</b>\n📚 Szukam w kolekcji…",
         parse_mode="HTML",
     )
     start_time = time.time()
@@ -165,9 +159,8 @@ async def gigagrok_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         async for event_type, data in grok.chat_stream(
             messages=messages,
             model=settings.xai_model_reasoning,
-            max_tokens=settings.max_output_tokens,
-            reasoning_effort="high",
-            tools=tools,
+            max_tokens=settings.gigagrok_max_output_tokens,
+            tools=tools if tools else None,
             search={"search": {"enabled": True}},
         ):
             if event_type == "reasoning":
@@ -188,7 +181,7 @@ async def gigagrok_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                 full_content += str(data)
                 now = time.time()
                 if now - last_edit > 1.5:
-                    display = escape_html(full_content[:3800])
+                    display = markdown_to_telegram_html(full_content[:3800])
                     if len(full_content) > 3800:
                         display += "\n\n<i>... (kontynuacja)</i>"
                     try:
@@ -202,6 +195,15 @@ async def gigagrok_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         logger.error("gigagrok_command_api_error", user_id=user_id, error=str(exc))
         await sent.edit_text(f"❌ Błąd API: {escape_html(str(exc))}", parse_mode="HTML")
         return
+
+    # Update status to final
+    try:
+        await sent.edit_text(
+            "🚀 <b>GIGAGROK MODE</b>\n✅ Final…",
+            parse_mode="HTML",
+        )
+    except Exception:
+        pass
 
     elapsed = time.time() - start_time
     tokens_in = int(usage.get("prompt_tokens", 0) or 0)
@@ -217,7 +219,7 @@ async def gigagrok_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         elapsed,
         used_tools,
     )
-    final_text = f"{escape_html(full_content)}\n\n<code>{escape_html(footer)}</code>"
+    final_text = f"{markdown_to_telegram_html(full_content)}\n\n<code>{escape_html(footer)}</code>"
     parts = split_message(final_text, max_length=4000)
 
     try:
