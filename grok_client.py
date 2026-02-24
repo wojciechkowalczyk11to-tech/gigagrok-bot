@@ -104,6 +104,18 @@ class GrokClient:
                         if "reasoning_content" in delta and delta["reasoning_content"]:
                             yield ("reasoning", delta["reasoning_content"])
 
+                        tool_calls = delta.get("tool_calls")
+                        if isinstance(tool_calls, list):
+                            for tool_call in tool_calls:
+                                if not isinstance(tool_call, dict):
+                                    continue
+                                function_data = tool_call.get("function", {})
+                                if not isinstance(function_data, dict):
+                                    continue
+                                tool_name = function_data.get("name")
+                                if isinstance(tool_name, str) and tool_name:
+                                    yield ("tool_use", tool_name)
+
                         if "content" in delta and delta["content"]:
                             yield ("content", delta["content"])
 
