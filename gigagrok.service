@@ -1,0 +1,29 @@
+[Unit]
+Description=GigaGrok Telegram Bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=gigagrok
+Group=gigagrok
+WorkingDirectory=/opt/gigagrok
+ExecStart=/opt/gigagrok/venv/bin/python main.py
+Restart=always
+RestartSec=10
+Environment=PYTHONUNBUFFERED=1
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/opt/gigagrok
+PrivateTmp=true
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=gigagrok
+
+[Install]
+WantedBy=multi-user.target
