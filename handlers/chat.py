@@ -15,6 +15,7 @@ from grok_client import GrokClient
 from utils import check_access, escape_html, format_footer, get_current_date, split_message
 
 logger = structlog.get_logger(__name__)
+_PENDING_FILE_KEY = "pending_workspace_file_context"
 
 # Module-level client — initialised in main.py via ``init_grok_client``
 _grok: GrokClient | None = None
@@ -39,7 +40,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await update.message.reply_text("❌ Klient Grok nie został zainicjalizowany.")
         return
 
-    query = update.message.text
+    raw_query = update.message.text
+    file_context = context.user_data.pop(_PENDING_FILE_KEY, None)
+    query = raw_query
+    if file_context:
+        query = f"{raw_query}\n\n=== KONTEKST PLIKU ===\n{file_context}"
     logger.info("handle_message", user_id=user_id, query_len=len(query))
 
     # 2. History
@@ -144,7 +149,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             logger.exception("send_part_failed")
 
     # 9. Persist
-    await save_message(user_id, "user", query)
+    await save_message(user_id, "user", raw_query)
     await save_message(
         user_id,
         "assistant",
