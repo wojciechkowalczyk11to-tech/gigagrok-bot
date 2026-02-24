@@ -221,9 +221,12 @@ class GrokClient:
     # ------------------------------------------------------------------
     async def create_collection(self, name: str) -> dict[str, Any]:
         """Create xAI collection."""
+        normalized_name = name.strip()
+        if not normalized_name:
+            raise ValueError("Collection name cannot be empty.")
         resp = await self._client.post(
             f"{self._base_url}/collections",
-            json={"name": name},
+            json={"name": normalized_name},
         )
         resp.raise_for_status()
         return resp.json()  # type: ignore[no-any-return]
@@ -249,7 +252,6 @@ class GrokClient:
         resp = await self._client.post(
             f"{self._base_url}/collections/{collection_id}/documents",
             files={"file": (filename, file_bytes, mime_type)},
-            headers={"Authorization": f"Bearer {self._api_key}"},
         )
         resp.raise_for_status()
         return resp.json()  # type: ignore[no-any-return]

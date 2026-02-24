@@ -22,6 +22,18 @@ from grok_client import GrokClient
 from utils import check_access, escape_html
 
 logger = structlog.get_logger(__name__)
+MAX_SNIPPET_DISPLAY_LENGTH = 280
+
+
+def _plural_pl(count: int, form_1: str, form_2_4: str, form_other: str) -> str:
+    """Return Polish plural form for integer count."""
+    if count == 1:
+        return form_1
+    mod10 = count % 10
+    mod100 = count % 100
+    if mod10 in (2, 3, 4) and mod100 not in (12, 13, 14):
+        return form_2_4
+    return form_other
 
 
 def _parse_local_collection_id(collection_id: str) -> int | None:
@@ -99,12 +111,16 @@ async def _show_menu(update: Update, grok: GrokClient) -> None:
                 }
             )
 
-    lines: list[str] = [f"📚 <b>Kolekcje</b> ({len(collections)} kolekcje)", ""]
+    count = len(collections)
+    noun = _plural_pl(count, "kolekcja", "kolekcje", "kolekcji")
+    lines: list[str] = [f"📚 <b>Kolekcje</b> ({count} {noun})", ""]
     for idx, item in enumerate(collections, start=1):
+        document_count = int(item.get("document_count", 0))
+        doc_noun = _plural_pl(document_count, "dokument", "dokumenty", "dokumentów")
         lines.append(
             f"{idx}. 📁 {escape_html(str(item['name']))} "
             f"(<code>{escape_html(str(item['id']))}</code>) — "
-            f"{int(item.get('document_count', 0))} dokumentów"
+            f"{document_count} {doc_noun}"
         )
     if not collections:
         lines.append("Brak kolekcji.")
@@ -187,7 +203,12 @@ async def _add_document(update: Update, context: ContextTypes.DEFAULT_TYPE, grok
         return
 
     try:
-        await grok.upload_collection_document(collection_id, filename, file_bytes, reply.document.mime_type or "application/octet-stream")
+        await grok.upload_collection_document(
+            collection_id,
+            filename,
+            file_bytes,
+            reply.document.mime_type or "application/octet-stream",
+        )
         await update.message.reply_text("✅ Dodano dokument do kolekcji xAI.")
     except Exception:
         logger.exception("upload_remote_document_failed", collection_id=collection_id, filename=filename)
@@ -277,7 +298,7 @@ async def _search_collection(
             snippet = str(row.get("snippet", "")).strip() or "(brak podglądu)"
             lines.append(
                 f"{idx}. <b>{escape_html(str(row.get('filename', 'plik')))}</b>\n"
-                f"{escape_html(snippet[:280])}"
+                f"{escape_html(snippet[:MAX_SNIPPET_DISPLAY_LENGTH])}"
             )
         await update.message.reply_text("\n\n".join(lines), parse_mode="HTML")
         return

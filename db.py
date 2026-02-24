@@ -17,6 +17,7 @@ logger = structlog.get_logger(__name__)
 # ---------------------------------------------------------------------------
 COST_PER_M_INPUT: float = 0.20   # $0.20 per 1M input tokens
 COST_PER_M_OUTPUT: float = 0.50  # $0.50 per 1M output tokens (reasoning too)
+FTS_SNIPPET_TOKENS: int = 18
 
 
 def calculate_cost(tokens_in: int, tokens_out: int, reasoning_tokens: int) -> float:
@@ -496,7 +497,7 @@ async def list_local_collections() -> list[dict[str, Any]]:
             FROM local_collections c
             LEFT JOIN local_collection_documents d ON d.collection_id = c.id
             GROUP BY c.id, c.name, c.created_at
-            ORDER BY c.created_at ASC, c.id ASC
+            ORDER BY c.created_at DESC, c.id DESC
             """
         )
         rows = await cursor.fetchall()
@@ -586,14 +587,14 @@ async def search_local_collection_documents(
         try:
             cursor = await db.execute(
                 """
-                SELECT d.id, d.filename, snippet(local_collection_documents_fts, 1, '[', ']', '…', 18) AS snippet
+                SELECT d.id, d.filename, snippet(local_collection_documents_fts, 1, '[', ']', '…', ?) AS snippet
                 FROM local_collection_documents_fts
                 JOIN local_collection_documents d ON d.id = local_collection_documents_fts.rowid
                 WHERE d.collection_id = ? AND local_collection_documents_fts MATCH ?
                 ORDER BY bm25(local_collection_documents_fts)
                 LIMIT ?
                 """,
-                (collection_id, query, limit),
+                (FTS_SNIPPET_TOKENS, collection_id, query, limit),
             )
             rows = await cursor.fetchall()
             return [dict(row) for row in rows]
