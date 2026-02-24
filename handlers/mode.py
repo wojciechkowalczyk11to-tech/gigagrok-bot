@@ -18,7 +18,7 @@ logger = structlog.get_logger(__name__)
 
 
 async def fast_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle /fast <tekst> - szybka odpowiedź bez reasoning."""
+    """Handle /fast <text> - quick response without reasoning."""
     if not update.effective_user or not update.message:
         return
     if not await check_access(update, settings):
