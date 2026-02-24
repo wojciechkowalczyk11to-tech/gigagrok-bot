@@ -6,4 +6,4 @@ structlog
 python-dotenv==1.0.1
 pdfplumber==0.11.0
 python-docx==1.1.0
-Pillow==10.4.0
+Pillow==12.1.1
