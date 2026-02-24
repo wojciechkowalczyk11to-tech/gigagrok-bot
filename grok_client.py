@@ -238,6 +238,78 @@ class GrokClient:
         raise RuntimeError("Unexpected: no response and no error")
 
     # ------------------------------------------------------------------
+    # Collection search (REST — not via tools)
+    # ------------------------------------------------------------------
+    async def search_collection(
+        self,
+        collection_id: str,
+        query: str,
+        max_results: int = 10,
+    ) -> list[dict[str, Any]]:
+        """Search a collection via ``POST /documents/search``.
+
+        Returns a list of result dicts (each with ``content``, ``score``, etc.).
+        Raises on HTTP errors after retries.
+        """
+        body: dict[str, Any] = {
+            "query": query,
+            "source": {"collection_ids": [collection_id]},
+        }
+
+        last_error: Exception | None = None
+        for attempt in range(_MAX_RETRIES):
+            try:
+                async with self._semaphore:
+                    resp = await self._client.post(
+                        f"{self._base_url}/documents/search",
+                        json=body,
+                    )
+
+                if resp.status_code == 429:
+                    logger.warning(
+                        "collection_search_rate_limited",
+                        attempt=attempt + 1,
+                        delay=_RATE_LIMIT_DELAY,
+                    )
+                    await asyncio.sleep(_RATE_LIMIT_DELAY)
+                    continue
+
+                resp.raise_for_status()
+                data = resp.json()
+
+                results: list[dict[str, Any]]
+                if isinstance(data, list):
+                    results = [r for r in data if isinstance(r, dict)]
+                elif isinstance(data, dict):
+                    if isinstance(data.get("results"), list):
+                        results = [r for r in data["results"] if isinstance(r, dict)]
+                    elif isinstance(data.get("data"), list):
+                        results = [r for r in data["data"] if isinstance(r, dict)]
+                    else:
+                        results = []
+                else:
+                    results = []
+
+                return results[:max_results]
+            except Exception as exc:
+                last_error = exc
+                if attempt < _MAX_RETRIES - 1:
+                    delay = _RETRY_DELAYS[attempt]
+                    logger.warning(
+                        "collection_search_retry",
+                        attempt=attempt + 1,
+                        delay=delay,
+                        error=str(exc),
+                    )
+                    await asyncio.sleep(delay)
+                    continue
+
+        if last_error:
+            logger.error("collection_search_failed", error=str(last_error))
+            raise last_error
+        raise RuntimeError("collection search — wszystkie próby wyczerpane")
+
+    # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
     async def close(self) -> None:
