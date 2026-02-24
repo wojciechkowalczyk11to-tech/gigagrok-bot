@@ -20,7 +20,11 @@ sudo apt update && sudo apt install -y cloudflared
 sudo useradd -r -m -s /bin/bash gigagrok
 
 # Clone repo
-sudo -u gigagrok git clone https://ghp_TOKEN@github.com/USER/gigagrok-bot.git /opt/gigagrok
+REPO_URL="${REPO_URL:-https://github.com/wojciechkowalczyk11to-tech/gigagrok-bot.git}"
+if [ -n "${GITHUB_TOKEN:-}" ]; then
+  REPO_URL="https://${GITHUB_TOKEN}@${REPO_URL#https://}"
+fi
+sudo -u gigagrok git clone "$REPO_URL" /opt/gigagrok
 cd /opt/gigagrok
 
 # Venv

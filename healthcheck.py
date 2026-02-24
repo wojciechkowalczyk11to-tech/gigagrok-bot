@@ -44,13 +44,10 @@ def _get_last_message_age(db_path: str) -> str:
     if not os.path.exists(db_path):
         return "never"
     try:
-        db = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
-        try:
+        with sqlite3.connect(f"file:{db_path}?mode=ro", uri=True) as db:
             row = db.execute(
                 "SELECT created_at FROM conversations ORDER BY created_at DESC LIMIT 1"
             ).fetchone()
-        finally:
-            db.close()
         if not row or not row[0]:
             return "never"
         last_message_dt = datetime.strptime(row[0], "%Y-%m-%d %H:%M:%S").replace(
@@ -89,8 +86,8 @@ def start_healthcheck_server(
             self.end_headers()
             self.wfile.write(body)
 
-        def log_message(self, format: str, *args: object) -> None:
-            return
+        def log_message(self, fmt: str, *args: object) -> None:
+            pass
 
     server = ThreadingHTTPServer((host, port), _HealthHandler)
     thread = threading.Thread(
