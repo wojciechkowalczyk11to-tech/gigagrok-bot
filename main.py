@@ -18,6 +18,7 @@ from healthcheck import start_healthcheck_server
 from handlers.admin import adduser_command, removeuser_command, users_command
 from handlers.chat import handle_message, init_grok_client
 from handlers.collection import collection_command
+from handlers.collectionsearch import collectionsearch_command
 from handlers.conversation import clear_command, profile_command, stats_command, system_command, think_command
 from handlers.file import file_command, handle_document
 from handlers.gigagrok import gigagrok_command
@@ -144,6 +145,7 @@ def main() -> None:
     app.add_handler(CommandHandler("adduser", adduser_command))
     app.add_handler(CommandHandler("removeuser", removeuser_command))
     app.add_handler(CommandHandler("collection", collection_command))
+    app.add_handler(CommandHandler("collectionsearch", collectionsearch_command))
     app.add_handler(CommandHandler("gigagrok", gigagrok_command))
     app.add_handler(CommandHandler("github", github_command))
     app.add_handler(CommandHandler("workspace", workspace_command))

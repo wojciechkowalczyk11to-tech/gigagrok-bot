@@ -13,7 +13,7 @@ from config import settings
 from db import calculate_cost, get_history, save_message, update_daily_stats
 from file_utils import image_to_base64
 from grok_client import GrokClient
-from tools import build_stage1_tools, build_stage2_tools
+from tools import build_stage2_tools
 from utils import (
     check_access,
     escape_html,
@@ -86,10 +86,7 @@ async def _build_user_message_content(
 async def gigagrok_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /gigagrok <prompt> in full-power autonomous mode.
 
-    Guaranteed stage order:
-    STAGE 1: Collection search (via file_search with XAI_COLLECTION_ID)
-    STAGE 2: Web / X / Code tools
-    STAGE 3: Verify / final response
+    Uses web / X / code tools. Collection search is separate: /collectionsearch.
     """
     if not update.effective_user or not update.message:
         return
@@ -110,28 +107,22 @@ async def gigagrok_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         await update.message.reply_text("❌ Klient Grok nie został zainicjalizowany.")
         return
 
-    collection_id = settings.xai_collection_id
-
-    # Build tools for the combined request
+    # Build tools for the combined request (no file_search — use /collectionsearch)
     tools: list[dict[str, Any]] = []
-    if collection_id:
-        tools.extend(build_stage1_tools(collection_id))
     if settings.gigagrok_stage2_enabled:
         tools.extend(build_stage2_tools())
 
     system_prompt = (
         "Jesteś w trybie GIGAGROK — PEŁNA MOC.\n\n"
         "Masz dostęp do narzędzi:\n"
-        "📚 File Search — szukaj w bazie wiedzy użytkownika (PRIORYTET — szukaj tu NAJPIERW)\n"
         "🌐 Web Search — szukaj aktualnych informacji w internecie\n"
         "🐦 X Search — szukaj na X/Twitter\n"
         "⚡ Code Interpreter — uruchamiaj kod w sandboxie\n\n"
         "STRATEGIA:\n"
-        "1. ZAWSZE najpierw przeszukaj bazę wiedzy (file_search) — to priorytet.\n"
-        "2. Jeśli baza wiedzy nie wystarczy, użyj web/X search.\n"
-        "3. Użyj code interpreter gdy potrzebne obliczenia lub analiza.\n"
-        "4. Myśl głęboko, ale publikuj TYLKO wynik i wnioski.\n"
-        "5. Daj kompletną, praktyczną odpowiedź.\n\n"
+        "1. Użyj web/X search aby uzyskać aktualne informacje.\n"
+        "2. Użyj code interpreter gdy potrzebne obliczenia lub analiza.\n"
+        "3. Myśl głęboko, ale publikuj TYLKO wynik i wnioski.\n"
+        "4. Daj kompletną, praktyczną odpowiedź.\n\n"
         f"Aktualna data: {get_current_date()}"
     )
 
@@ -145,7 +136,7 @@ async def gigagrok_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     messages.append({"role": "user", "content": user_content})
 
     sent = await update.message.reply_text(
-        "🚀 <b>GIGAGROK MODE</b>\n📚 Szukam w kolekcji…",
+        "🚀 <b>GIGAGROK MODE</b>\n🔄 Przetwarzam…",
         parse_mode="HTML",
     )
     start_time = time.time()
