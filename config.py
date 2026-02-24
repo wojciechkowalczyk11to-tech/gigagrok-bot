@@ -60,6 +60,9 @@ class Settings(BaseSettings):
     max_output_tokens: int = 16000
     default_reasoning_effort: str = "high"
     log_level: str = "INFO"
+    github_token: str = ""
+    workspace_base: str = "/home/user/workspaces"
+    workspace_whitelist: list[str] = ["/home/user", "/opt"]
 
     @property
     def allowed_users(self) -> set[int]:

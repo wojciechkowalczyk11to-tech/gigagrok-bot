@@ -71,7 +71,10 @@ _HELP_TEXT = (
     "💡 Wskazówka: zwykłe wysłanie zdjęcia lub dokumentu uruchamia analizę automatycznie.\n"
     "\n"
     "📦 /collection → zarządzaj bazą wiedzy\n"
-    "📥 /export → eksportuj historię"
+    "📥 /export → eksportuj historię\n"
+    "\n"
+    "🐙 /github &lt;plik&gt; → odczytaj plik z workspace i dodaj do następnego pytania\n"
+    "🛠 /workspace write &lt;plik&gt; → zapisz treść z wiadomości-reply do pliku"
 )
 
 
