@@ -12,7 +12,7 @@ from telegram.ext import ContextTypes
 from config import DEFAULT_SYSTEM_PROMPT, settings
 from db import calculate_cost, get_history, save_message, update_daily_stats, get_user_setting
 from grok_client import GrokClient
-from utils import escape_html, format_footer, get_current_date, split_message
+from utils import check_access, escape_html, format_footer, get_current_date, split_message
 
 logger = structlog.get_logger(__name__)
 
@@ -31,12 +31,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if not update.effective_user or not update.message or not update.message.text:
         return
 
-    user_id = update.effective_user.id
-
-    # 1. Auth
-    if user_id != settings.admin_user_id:
-        await update.message.reply_text("⛔ Brak dostępu.")
+    if not await check_access(update, settings):
         return
+    user_id = update.effective_user.id
 
     if _grok is None:
         await update.message.reply_text("❌ Klient Grok nie został zainicjalizowany.")

@@ -7,6 +7,7 @@ from telegram import Update
 from telegram.ext import ContextTypes
 
 from config import settings
+from utils import check_access
 
 logger = structlog.get_logger(__name__)
 
@@ -33,10 +34,9 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     if not update.effective_user or not update.message:
         return
 
-    user_id = update.effective_user.id
-    if user_id != settings.admin_user_id:
-        await update.message.reply_text("⛔ Brak dostępu.")
+    if not await check_access(update, settings):
         return
+    user_id = update.effective_user.id
 
     logger.info("start_command", user_id=user_id)
     await update.message.reply_text(_START_TEXT, parse_mode="HTML")
@@ -77,10 +77,9 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     if not update.effective_user or not update.message:
         return
 
-    user_id = update.effective_user.id
-    if user_id != settings.admin_user_id:
-        await update.message.reply_text("⛔ Brak dostępu.")
+    if not await check_access(update, settings):
         return
+    user_id = update.effective_user.id
 
     logger.info("help_command", user_id=user_id)
     await update.message.reply_text(_HELP_TEXT, parse_mode="HTML")

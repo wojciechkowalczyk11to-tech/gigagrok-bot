@@ -4,6 +4,16 @@ from __future__ import annotations
 
 import re
 from datetime import datetime, timezone
+from typing import Protocol
+
+from telegram import Update
+
+
+class AccessSettings(Protocol):
+    """Minimal settings interface required for access checks."""
+
+    def is_allowed(self, user_id: int) -> bool:
+        """Return True if user is allowed."""
 
 
 # ---------------------------------------------------------------------------
@@ -117,3 +127,24 @@ def format_number(n: int) -> str:
 def get_current_date() -> str:
     """Return today's date as ``YYYY-MM-DD`` (UTC)."""
     return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+
+async def check_access(update: Update, app_settings: AccessSettings) -> bool:
+    """Sprawdź dostęp użytkownika; zwróć True jeśli ma uprawnienia."""
+    if not update.effective_user or not update.message:
+        return False
+
+    user_id = update.effective_user.id
+    is_allowed = app_settings.is_allowed(user_id)
+    if not is_allowed:
+        from db import is_dynamic_user_allowed
+
+        is_allowed = await is_dynamic_user_allowed(user_id)
+
+    if not is_allowed:
+        await update.message.reply_text(
+            f"⛔ Brak dostępu.\nTwoje ID: <code>{user_id}</code>\nPoproś admina o dodanie.",
+            parse_mode="HTML",
+        )
+        return False
+    return True

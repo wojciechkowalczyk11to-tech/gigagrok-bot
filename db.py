@@ -65,6 +65,12 @@ CREATE TABLE IF NOT EXISTS usage_stats (
     UNIQUE(user_id, date)
 );
 
+CREATE TABLE IF NOT EXISTS dynamic_users (
+    user_id INTEGER PRIMARY KEY,
+    added_by INTEGER NOT NULL,
+    added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE INDEX IF NOT EXISTS idx_conv_user_time ON conversations(user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_stats_user_date ON usage_stats(user_id, date);
 """
@@ -312,5 +318,108 @@ async def get_user_setting(user_id: int, key: str) -> str | None:
     except Exception:
         logger.exception("get_user_setting_failed", user_id=user_id, key=key)
         return None
+    finally:
+        await db.close()
+
+
+async def add_dynamic_user(user_id: int, added_by: int) -> bool:
+    """Dodaj użytkownika do dynamicznej listy dostępów."""
+    db = await _get_db()
+    try:
+        await db.execute(
+            "INSERT OR IGNORE INTO dynamic_users (user_id, added_by) VALUES (?, ?)",
+            (user_id, added_by),
+        )
+        await db.commit()
+        return True
+    except Exception:
+        logger.exception("add_dynamic_user_failed", user_id=user_id, added_by=added_by)
+        return False
+    finally:
+        await db.close()
+
+
+async def remove_dynamic_user(user_id: int) -> int:
+    """Usuń użytkownika z dynamicznej listy dostępów."""
+    db = await _get_db()
+    try:
+        cursor = await db.execute("DELETE FROM dynamic_users WHERE user_id = ?", (user_id,))
+        await db.commit()
+        return cursor.rowcount  # type: ignore[return-value]
+    except Exception:
+        logger.exception("remove_dynamic_user_failed", user_id=user_id)
+        return 0
+    finally:
+        await db.close()
+
+
+async def is_dynamic_user_allowed(user_id: int) -> bool:
+    """Sprawdź, czy użytkownik istnieje na dynamicznej liście dostępów."""
+    db = await _get_db()
+    try:
+        cursor = await db.execute(
+            "SELECT 1 FROM dynamic_users WHERE user_id = ? LIMIT 1",
+            (user_id,),
+        )
+        row = await cursor.fetchone()
+        return row is not None
+    except Exception:
+        logger.exception("is_dynamic_user_allowed_failed", user_id=user_id)
+        return False
+    finally:
+        await db.close()
+
+
+async def list_dynamic_users() -> list[int]:
+    """Zwróć listę użytkowników dodanych dynamicznie."""
+    db = await _get_db()
+    try:
+        cursor = await db.execute(
+            "SELECT user_id FROM dynamic_users ORDER BY added_at ASC, user_id ASC"
+        )
+        rows = await cursor.fetchall()
+        return [int(row["user_id"]) for row in rows]
+    except Exception:
+        logger.exception("list_dynamic_users_failed")
+        return []
+    finally:
+        await db.close()
+
+
+async def get_users_usage_summary(
+    user_ids: list[int],
+) -> dict[int, dict[str, int | float]]:
+    """Zwróć zagregowane statystyki usage dla podanych użytkowników."""
+    if not user_ids:
+        return {}
+
+    placeholders = ",".join("?" for _ in user_ids)
+    query = (
+        "SELECT user_id, COALESCE(SUM(total_requests), 0) AS total_requests, "
+        "COALESCE(SUM(total_cost_usd), 0.0) AS total_cost_usd "
+        f"FROM usage_stats WHERE user_id IN ({placeholders}) GROUP BY user_id"
+    )
+
+    db = await _get_db()
+    try:
+        cursor = await db.execute(query, tuple(user_ids))
+        rows = await cursor.fetchall()
+        result: dict[int, dict[str, int | float]] = {
+            int(user_id): {"total_requests": 0, "total_cost_usd": 0.0}
+            for user_id in user_ids
+        }
+        for row in rows:
+            uid = int(row["user_id"])
+            result[uid] = {
+                "total_requests": int(row["total_requests"]),
+                "total_cost_usd": float(row["total_cost_usd"]),
+            }
+        return result
+    except Exception:
+        logger.exception("get_users_usage_summary_failed", user_ids=user_ids)
+        return {
+            int(user_id): {"total_requests": 0, "total_cost_usd": 0.0}
+            for user_id in user_ids
+        }
     finally:
         await db.close()
