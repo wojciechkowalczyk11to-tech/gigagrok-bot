@@ -40,6 +40,7 @@ class GrokClient:
         max_tokens: int = 16000,
         reasoning_effort: str | None = None,
         tools: list[dict[str, Any]] | None = None,
+        search: dict[str, Any] | None = None,
     ) -> AsyncGenerator[tuple[str, Any], None]:
         """Yield ``(event_type, data)`` tuples from a streaming chat request.
 
@@ -62,6 +63,9 @@ class GrokClient:
 
         if tools:
             body["tools"] = tools
+
+        if search:
+            body.update(search)
 
         last_error: Exception | None = None
         for attempt in range(_MAX_RETRIES):
@@ -161,6 +165,7 @@ class GrokClient:
         max_tokens: int = 16000,
         reasoning_effort: str | None = None,
         tools: list[dict[str, Any]] | None = None,
+        search: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Send a non-streaming chat request and return the full response."""
         body: dict[str, Any] = {
@@ -175,6 +180,9 @@ class GrokClient:
 
         if tools:
             body["tools"] = tools
+
+        if search:
+            body.update(search)
 
         last_error: Exception | None = None
         for attempt in range(_MAX_RETRIES):

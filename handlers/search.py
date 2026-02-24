@@ -11,7 +11,6 @@ from telegram.ext import ContextTypes
 from config import settings
 from db import calculate_cost, save_message, update_daily_stats
 from grok_client import GrokClient
-from tools import TOOL_WEB_SEARCH, TOOL_X_SEARCH
 from utils import check_access, escape_html, format_footer, split_message
 
 logger = structlog.get_logger(__name__)
@@ -34,7 +33,7 @@ async def websearch_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         query=query,
         system_prompt=system_prompt,
         status_text="🔍 Szukam w internecie...",
-        tools=[TOOL_WEB_SEARCH],
+        search_params={"search": {"enabled": True}},
         command_name="websearch_command",
     )
 
@@ -56,7 +55,7 @@ async def xsearch_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         query=query,
         system_prompt=system_prompt,
         status_text="🐦 Szukam na X/Twitter...",
-        tools=[TOOL_X_SEARCH],
+        search_params={"search": {"enabled": True}},
         command_name="xsearch_command",
     )
 
@@ -67,8 +66,8 @@ async def _run_search_command(
     query: str,
     system_prompt: str,
     status_text: str,
-    tools: list[dict[str, object]],
-    command_name: str,
+    search_params: dict | None = None,
+    command_name: str = "",
 ) -> None:
     """Execute a streaming search command with a dedicated tool."""
     if not update.effective_user or not update.message:
@@ -102,7 +101,7 @@ async def _run_search_command(
             model=settings.xai_model_reasoning,
             max_tokens=settings.max_output_tokens,
             reasoning_effort="medium",
-            tools=tools,
+            search=search_params,
         ):
             if event_type == "reasoning":
                 full_reasoning += str(data)

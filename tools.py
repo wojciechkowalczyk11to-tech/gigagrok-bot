@@ -1,46 +1,19 @@
-"""Definitions for xAI Agent Tools used by command handlers."""
+"""Definitions for xAI search and tool configurations."""
 
 from __future__ import annotations
-
 from typing import Any
 
-TOOL_WEB_SEARCH: dict[str, Any] = {
-    "type": "function",
-    "function": {
-        "name": "web_search",
-        "description": "Search the internet for current information, news, facts, documentation",
-        "parameters": {},
-    },
-}
+# Search parameter for built-in web search
+SEARCH_WEB = {"search": {"enabled": True}}
 
-TOOL_X_SEARCH: dict[str, Any] = {
-    "type": "function",
-    "function": {
-        "name": "x_search",
-        "description": "Search posts and discussions on X (Twitter)",
-        "parameters": {},
-    },
-}
-
+# Agent tools (require client-side handling)
 TOOL_CODE_EXEC: dict[str, Any] = {
     "type": "function",
     "function": {
         "name": "code_execution",
-        "description": "Execute code in a sandboxed environment. Supports Python, JavaScript, and more.",
+        "description": "Execute code in a sandboxed environment.",
         "parameters": {},
     },
 }
 
-TOOLS_ALL: list[dict[str, Any]] = [TOOL_WEB_SEARCH, TOOL_X_SEARCH, TOOL_CODE_EXEC]
-
-
-def get_tools(command: str) -> list[dict[str, Any]]:
-    """Zwróć tools dla danej komendy."""
-    mapping: dict[str, list[dict[str, Any]]] = {
-        "websearch": [TOOL_WEB_SEARCH],
-        "xsearch": [TOOL_X_SEARCH],
-        "code": [TOOL_CODE_EXEC],
-        "analyze": [TOOL_WEB_SEARCH, TOOL_CODE_EXEC],
-        "gigagrok": TOOLS_ALL,
-    }
-    return mapping.get(command, [])
+TOOLS_ALL: list[dict[str, Any]] = [TOOL_CODE_EXEC]
