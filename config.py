@@ -80,8 +80,8 @@ class Settings(BaseSettings):
     default_reasoning_effort: str = "high"
     log_level: str = "INFO"
     github_token: str = ""
-    workspace_base: str = "/home/user/workspaces"
-    workspace_whitelist: list[str] = ["/home/user", "/opt"]
+    workspace_base: str = "/opt/gigagrok/workspaces"
+    workspace_whitelist: list[str] = ["/opt/gigagrok/workspaces"]
     enable_responses_tools: bool = False
     xai_collection_id: str = "collection_54242e4b-351f-4c70-89d3-833165fca772"
     gigagrok_stage2_enabled: bool = True

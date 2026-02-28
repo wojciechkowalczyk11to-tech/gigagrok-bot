@@ -600,15 +600,17 @@ async def search_local_collection_documents(
             rows = await cursor.fetchall()
             return [dict(row) for row in rows]
         except Exception:
+            # Escape LIKE special characters to prevent wildcard injection
+            safe_query = query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
             cursor = await db.execute(
                 """
                 SELECT id, filename, substr(content, 1, 220) AS snippet
                 FROM local_collection_documents
-                WHERE collection_id = ? AND content LIKE ?
+                WHERE collection_id = ? AND content LIKE ? ESCAPE '\\'
                 ORDER BY created_at DESC, id DESC
                 LIMIT ?
                 """,
-                (collection_id, f"%{query}%", limit),
+                (collection_id, f"%{safe_query}%", limit),
             )
             rows = await cursor.fetchall()
             return [dict(row) for row in rows]

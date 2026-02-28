@@ -11,13 +11,14 @@ WorkingDirectory=/opt/gigagrok
 ExecStart=/opt/gigagrok/venv/bin/python main.py
 Restart=always
 RestartSec=10
+TimeoutStopSec=30
 Environment=PYTHONUNBUFFERED=1
 
 # Security hardening
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=read-only
-ReadWritePaths=/opt/gigagrok
+ReadWritePaths=/opt/gigagrok /opt/gigagrok/workspaces
 PrivateTmp=true
 
 # Logging

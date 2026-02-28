@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import tempfile
 import time
 from io import BytesIO
@@ -188,11 +189,12 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
                 full_content += str(data)
                 now = time.time()
                 if now - last_edit > 1.5:
-                    display = escape_html(full_content[:3800])
-                    if len(full_content) > 3800:
-                        display += "\n\n<i>... (kontynuacja)</i>"
+                    header = f"🎤 <b>Transkrypcja:</b> {escape_html(transcript[:200])}\n\n"
+                    body_text = escape_html(full_content[:3600])
+                    if len(full_content) > 3600:
+                        body_text += "\n\n<i>... (kontynuacja)</i>"
                     try:
-                        await status.edit_text(display, parse_mode="HTML")
+                        await status.edit_text(header + body_text, parse_mode="HTML")
                     except Exception:
                         pass
                     last_edit = now
@@ -217,7 +219,8 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         elapsed,
     )
 
-    final_text = f"{markdown_to_telegram_html(full_content)}\n\n<code>{escape_html(footer)}</code>"
+    transcript_header = f"🎤 <b>Transkrypcja:</b> {escape_html(transcript[:200])}\n\n"
+    final_text = f"{transcript_header}{markdown_to_telegram_html(full_content)}\n\n<code>{escape_html(footer)}</code>"
     parts = split_message(final_text, max_length=4000)
     try:
         await status.edit_text(parts[0], parse_mode="HTML")
@@ -232,7 +235,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     voice_enabled = _is_enabled(await get_user_setting(user_id, "voice_enabled"))
     if voice_enabled and full_content.strip():
         try:
-            voice_bytes = _text_to_ogg_opus(full_content)
+            voice_bytes = await asyncio.to_thread(_text_to_ogg_opus, full_content)
             voice_buffer = BytesIO(voice_bytes)
             voice_buffer.name = "response.ogg"
             await update.message.reply_voice(voice=InputFile(voice_buffer))
