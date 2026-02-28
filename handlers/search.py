@@ -128,7 +128,7 @@ async def _run_search_command(
             elif event_type == "done":
                 usage = data if isinstance(data, dict) else {}
     except Exception as exc:
-        logger.error(f"{command_name}_api_error", user_id=user_id, error=str(exc))
+        logger.error("search_api_error", command=command_name, user_id=user_id, error=str(exc))
         await sent.edit_text(f"❌ Błąd API: {escape_html(str(exc))}", parse_mode="HTML")
         return
 
@@ -157,7 +157,7 @@ async def _run_search_command(
         try:
             await update.message.reply_text(part, parse_mode="HTML")
         except Exception:
-            logger.exception(f"{command_name}_send_part_failed", user_id=user_id)
+            logger.exception("search_send_part_failed", command=command_name, user_id=user_id)
 
     await save_message(user_id, "user", query)
     await save_message(
@@ -174,7 +174,8 @@ async def _run_search_command(
     await update_daily_stats(user_id, tokens_in, tokens_out, reasoning_tokens, cost)
 
     logger.info(
-        f"{command_name}_complete",
+        "search_complete",
+        command=command_name,
         user_id=user_id,
         tokens_in=tokens_in,
         tokens_out=tokens_out,

@@ -223,7 +223,14 @@ async def gigagrok_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         except Exception:
             logger.exception("gigagrok_send_part_failed", user_id=user_id)
 
-    await save_message(user_id, "user", prompt)
+    # Save text content to history (extract from multimodal if needed)
+    text_to_save = prompt
+    if isinstance(user_content, list):
+        for item in user_content:
+            if isinstance(item, dict) and item.get("type") == "text":
+                text_to_save = item.get("text", prompt)
+                break
+    await save_message(user_id, "user", text_to_save)
     await save_message(
         user_id,
         "assistant",

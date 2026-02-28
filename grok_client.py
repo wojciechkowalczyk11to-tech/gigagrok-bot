@@ -58,8 +58,7 @@ class GrokClient:
             "max_tokens": max_tokens,
         }
 
-        # reasoning param ONLY for models known to support effort
-        if reasoning_effort and model.startswith("grok-3-mini"):
+        if reasoning_effort:
             body["reasoning"] = {"effort": reasoning_effort}
 
         if tools:
@@ -192,7 +191,7 @@ class GrokClient:
             "max_tokens": max_tokens,
         }
 
-        if reasoning_effort and model.startswith("grok-3-mini"):
+        if reasoning_effort:
             body["reasoning"] = {"effort": reasoning_effort}
 
         if tools:

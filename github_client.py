@@ -17,14 +17,26 @@ MAX_READ_SIZE_BYTES = 1_048_576  # 1MB
 class GitHubClient:
     """Operacje Git na VM."""
 
-    def __init__(self, workspace_dir: str = "/home/user/workspaces"):
+    def __init__(self, workspace_dir: str = "/opt/gigagrok/workspaces"):
         self.workspace_dir = Path(workspace_dir).expanduser().resolve()
         self.workspace_dir.mkdir(parents=True, exist_ok=True)
 
     async def clone_or_pull(self, repo_url: str) -> Path:
         """Clone repo lub pull jeśli istnieje. Zwróć ścieżkę."""
         repo_name = self._repo_name_from_url(repo_url)
+        # Validate repo_name to prevent path traversal
+        if (
+            not repo_name
+            or repo_name in (".", "..")
+            or "/" in repo_name
+            or "\\" in repo_name
+        ):
+            raise ValueError(f"Nieprawidłowa nazwa repozytorium: {repo_name!r}")
         repo_path = (self.workspace_dir / repo_name).resolve()
+        try:
+            repo_path.relative_to(self.workspace_dir.resolve())
+        except ValueError as exc:
+            raise ValueError("Ścieżka repozytorium wychodzi poza workspace.") from exc
 
         if (repo_path / ".git").exists():
             await self._run_git(["pull", "--ff-only"], cwd=repo_path)
@@ -80,7 +92,9 @@ class GitHubClient:
         push_out = await self._run_git(["push"], cwd=root)
         return push_out.strip() or "Push zakończony sukcesem."
 
-    async def create_pr(self, repo_url: str, title: str, body: str, branch: str) -> str:
+    async def create_pr(
+        self, repo_url: str, title: str, body: str, branch: str, base_branch: str = "main"
+    ) -> str:
         """Stwórz PR via GitHub API. Zwróć URL."""
         token = settings.github_token.strip()
         if not token:
@@ -92,7 +106,7 @@ class GitHubClient:
             "Authorization": f"Bearer {token}",
             "Accept": "application/vnd.github+json",
         }
-        payload = {"title": title, "body": body, "head": branch, "base": "main"}
+        payload = {"title": title, "body": body, "head": branch, "base": base_branch}
 
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.post(url, headers=headers, json=payload)
