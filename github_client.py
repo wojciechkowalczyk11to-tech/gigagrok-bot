@@ -110,7 +110,7 @@ class GitHubClient:
         payload = {"title": title, "body": body, "head": branch, "base": base_branch}
 
         should_close = http_client is None
-        client = http_client or httpx.AsyncClient(timeout=30.0)
+        client = http_client if http_client is not None else httpx.AsyncClient(timeout=30.0)
         try:
             response = await client.post(url, headers=headers, json=payload)
             response.raise_for_status()

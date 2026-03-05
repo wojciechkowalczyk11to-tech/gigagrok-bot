@@ -354,7 +354,7 @@ APK_PATH="app/build/outputs/apk/release/app-release.apk"
 GROUPS="beta-testers"
 VERSION=$(grep versionName app/build.gradle | awk '{print $2}' | tr -d '"')
 
-echo "📱 Dystrybuuję APK v${VERSION}..."
+echo "📱 Dystrybuję APK v${VERSION}..."
 
 firebase appdistribution:distribute "$APK_PATH" \
   --app "$APP_ID" \

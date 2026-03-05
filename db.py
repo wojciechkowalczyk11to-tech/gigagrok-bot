@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import date as date_type, datetime, timezone
 from typing import Any
 
@@ -128,6 +129,7 @@ def _today() -> str:
 # Persistent connection (reused across all DB operations)
 # ---------------------------------------------------------------------------
 _db: aiosqlite.Connection | None = None
+_db_lock = asyncio.Lock()
 
 
 async def _get_db() -> aiosqlite.Connection:
@@ -136,25 +138,33 @@ async def _get_db() -> aiosqlite.Connection:
     The connection is initialised once in :func:`init_db` and reused for every
     subsequent call.  This avoids the overhead of opening a new connection,
     setting PRAGMAs and negotiating WAL mode on **every** database operation.
+
+    An asyncio.Lock guards initialisation so concurrent coroutines cannot
+    create multiple connections.
     """
     global _db  # noqa: PLW0603
-    if _db is None:
-        _db = await aiosqlite.connect(settings.db_path)
-        _db.row_factory = aiosqlite.Row
-        await _db.execute("PRAGMA journal_mode=WAL")
-        await _db.execute("PRAGMA foreign_keys=ON")
+    if _db is not None:
+        return _db
+    async with _db_lock:
+        # Double-check after acquiring lock
+        if _db is None:
+            _db = await aiosqlite.connect(settings.db_path)
+            _db.row_factory = aiosqlite.Row
+            await _db.execute("PRAGMA journal_mode=WAL")
+            await _db.execute("PRAGMA foreign_keys=ON")
     return _db
 
 
 async def close_db() -> None:
     """Close the persistent connection (call at shutdown)."""
     global _db  # noqa: PLW0603
-    if _db is not None:
-        try:
-            await _db.close()
-        except Exception:
-            logger.exception("close_db_failed")
-        _db = None
+    async with _db_lock:
+        if _db is not None:
+            try:
+                await _db.close()
+            except Exception:
+                logger.exception("close_db_failed")
+            _db = None
 
 
 # ---------------------------------------------------------------------------
@@ -162,7 +172,11 @@ async def close_db() -> None:
 # ---------------------------------------------------------------------------
 
 async def init_db() -> None:
-    """Create tables if they don't exist."""
+    """Create tables if they don't exist.
+
+    Also initialises the persistent database connection that will be reused
+    by all subsequent database operations until :func:`close_db` is called.
+    """
     db = await _get_db()
     try:
         await db.executescript(_SCHEMA)
