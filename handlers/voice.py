@@ -20,9 +20,8 @@ from db import (
     calculate_cost,
     get_history,
     get_user_setting,
-    save_message,
+    save_message_pair_and_stats,
     set_user_setting,
-    update_daily_stats,
 )
 from grok_client import GrokClient
 from utils import check_access, escape_html, format_footer, get_current_date, markdown_to_telegram_html, split_message
@@ -245,11 +244,10 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
                 "⚠️ Nie udało się wygenerować odpowiedzi głosowej (sprawdź ffmpeg)."
             )
 
-    await save_message(user_id, "user", transcript)
-    await save_message(
+    await save_message_pair_and_stats(
         user_id,
-        "assistant",
-        full_content,
+        user_content=transcript,
+        assistant_content=full_content,
         reasoning_content=full_reasoning,
         model=settings.xai_model_reasoning,
         tokens_in=tokens_in,
@@ -257,4 +255,3 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         reasoning_tokens=reasoning_tokens,
         cost_usd=cost,
     )
-    await update_daily_stats(user_id, tokens_in, tokens_out, reasoning_tokens, cost)

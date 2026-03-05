@@ -10,7 +10,7 @@ from telegram import Message, Update
 from telegram.ext import ContextTypes
 
 from config import settings
-from db import calculate_cost, save_message, update_daily_stats
+from db import calculate_cost, save_message_pair_and_stats
 from file_utils import image_to_base64
 from grok_client import GrokClient
 from utils import check_access, escape_html, format_footer, split_message
@@ -123,11 +123,10 @@ async def analyze_image_bytes(
         except Exception:
             logger.exception("image_send_part_failed", user_id=user_id)
 
-    await save_message(user_id, "user", f"[{source_label}] {prompt}")
-    await save_message(
+    await save_message_pair_and_stats(
         user_id,
-        "assistant",
-        full_content,
+        user_content=f"[{source_label}] {prompt}",
+        assistant_content=full_content,
         reasoning_content=full_reasoning,
         model=settings.xai_model_reasoning,
         tokens_in=tokens_in,
@@ -135,7 +134,6 @@ async def analyze_image_bytes(
         reasoning_tokens=reasoning_tokens,
         cost_usd=cost,
     )
-    await update_daily_stats(user_id, tokens_in, tokens_out, reasoning_tokens, cost)
 
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

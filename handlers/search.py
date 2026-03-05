@@ -9,7 +9,7 @@ from telegram import Update
 from telegram.ext import ContextTypes
 
 from config import settings
-from db import calculate_cost, save_message, update_daily_stats
+from db import calculate_cost, save_message_pair_and_stats
 from grok_client import GrokClient
 from utils import check_access, escape_html, format_footer, markdown_to_telegram_html, split_message
 
@@ -159,11 +159,10 @@ async def _run_search_command(
         except Exception:
             logger.exception("search_send_part_failed", command=command_name, user_id=user_id)
 
-    await save_message(user_id, "user", query)
-    await save_message(
+    await save_message_pair_and_stats(
         user_id,
-        "assistant",
-        full_content,
+        user_content=query,
+        assistant_content=full_content,
         reasoning_content=full_reasoning,
         model=settings.xai_model_reasoning,
         tokens_in=tokens_in,
@@ -171,7 +170,6 @@ async def _run_search_command(
         reasoning_tokens=reasoning_tokens,
         cost_usd=cost,
     )
-    await update_daily_stats(user_id, tokens_in, tokens_out, reasoning_tokens, cost)
 
     logger.info(
         "search_complete",

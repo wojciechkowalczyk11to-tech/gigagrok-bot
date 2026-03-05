@@ -10,7 +10,7 @@ from telegram import Message, Update
 from telegram.ext import ContextTypes
 
 from config import settings
-from db import calculate_cost, get_history, save_message, update_daily_stats
+from db import calculate_cost, get_history, save_message_pair_and_stats
 from file_utils import image_to_base64
 from grok_client import GrokClient
 from tools import build_stage2_tools
@@ -230,11 +230,10 @@ async def gigagrok_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             if isinstance(item, dict) and item.get("type") == "text":
                 text_to_save = item.get("text", prompt)
                 break
-    await save_message(user_id, "user", text_to_save)
-    await save_message(
+    await save_message_pair_and_stats(
         user_id,
-        "assistant",
-        full_content,
+        user_content=text_to_save,
+        assistant_content=full_content,
         reasoning_content=full_reasoning,
         model=settings.xai_model_reasoning,
         tokens_in=tokens_in,
@@ -242,7 +241,6 @@ async def gigagrok_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         reasoning_tokens=reasoning_tokens,
         cost_usd=cost,
     )
-    await update_daily_stats(user_id, tokens_in, tokens_out, reasoning_tokens, cost)
 
     logger.info(
         "gigagrok_command_complete",

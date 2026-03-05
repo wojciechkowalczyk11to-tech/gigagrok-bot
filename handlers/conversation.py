@@ -13,13 +13,11 @@ from config import DEFAULT_SYSTEM_PROMPT, PERSONALITY_PROFILES, settings
 from db import (
     calculate_cost,
     clear_history,
-    get_all_time_stats,
-    get_daily_stats,
     get_history,
     get_user_setting,
-    save_message,
+    get_user_stats_combined,
+    save_message_pair_and_stats,
     set_user_setting,
-    update_daily_stats,
 )
 from grok_client import GrokClient
 from utils import (
@@ -73,8 +71,7 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
     user_id = update.effective_user.id
     try:
-        today = await get_daily_stats(user_id)
-        alltime = await get_all_time_stats(user_id)
+        today, alltime = await get_user_stats_combined(user_id)
 
         lines = [
             "📊 <b>Statystyki użycia</b>",
@@ -262,11 +259,10 @@ async def think_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         except Exception:
             logger.exception("think_command_send_part_failed", user_id=user_id)
 
-    await save_message(user_id, "user", query)
-    await save_message(
+    await save_message_pair_and_stats(
         user_id,
-        "assistant",
-        full_content,
+        user_content=query,
+        assistant_content=full_content,
         reasoning_content=full_reasoning,
         model=settings.xai_model_reasoning,
         tokens_in=tokens_in,
@@ -274,7 +270,6 @@ async def think_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         reasoning_tokens=reasoning_tokens,
         cost_usd=cost,
     )
-    await update_daily_stats(user_id, tokens_in, tokens_out, reasoning_tokens, cost)
 
     logger.info(
         "think_command_complete",
