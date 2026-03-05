@@ -10,7 +10,7 @@ from telegram import Update
 from telegram.ext import ContextTypes
 
 from config import DEFAULT_SYSTEM_PROMPT, settings
-from db import calculate_cost, get_history, save_message, update_daily_stats, get_user_setting
+from db import calculate_cost, get_history, get_user_setting, save_message_pair_and_stats
 from grok_client import GrokClient
 from utils import check_access, escape_html, format_footer, get_current_date, markdown_to_telegram_html, split_message
 
@@ -148,12 +148,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         except Exception:
             logger.exception("send_part_failed")
 
-    # 9. Persist
-    await save_message(user_id, "user", raw_query)
-    await save_message(
+    # 9. Persist (single transaction instead of 3 separate calls)
+    await save_message_pair_and_stats(
         user_id,
-        "assistant",
-        full_content,
+        user_content=raw_query,
+        assistant_content=full_content,
         reasoning_content=full_reasoning,
         model=settings.xai_model_reasoning,
         tokens_in=tokens_in,
@@ -161,7 +160,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         reasoning_tokens=reasoning_tokens,
         cost_usd=cost,
     )
-    await update_daily_stats(user_id, tokens_in, tokens_out, reasoning_tokens, cost)
 
     logger.info(
         "message_complete",

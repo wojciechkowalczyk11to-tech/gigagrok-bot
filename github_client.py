@@ -93,7 +93,8 @@ class GitHubClient:
         return push_out.strip() or "Push zakończony sukcesem."
 
     async def create_pr(
-        self, repo_url: str, title: str, body: str, branch: str, base_branch: str = "main"
+        self, repo_url: str, title: str, body: str, branch: str, base_branch: str = "main",
+        http_client: httpx.AsyncClient | None = None,
     ) -> str:
         """Stwórz PR via GitHub API. Zwróć URL."""
         token = settings.github_token.strip()
@@ -108,10 +109,15 @@ class GitHubClient:
         }
         payload = {"title": title, "body": body, "head": branch, "base": base_branch}
 
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        should_close = http_client is None
+        client = http_client if http_client is not None else httpx.AsyncClient(timeout=30.0)
+        try:
             response = await client.post(url, headers=headers, json=payload)
             response.raise_for_status()
             data = response.json()
+        finally:
+            if should_close:
+                await client.aclose()
         pr_url = data.get("html_url")
         if not pr_url:
             raise RuntimeError("Nie udało się utworzyć PR.")

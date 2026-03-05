@@ -12,7 +12,7 @@ from telegram import Update
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes, MessageHandler, filters
 
 from config import settings
-from db import init_db
+from db import close_db, init_db
 from grok_client import GrokClient
 from healthcheck import start_healthcheck_server
 from handlers.admin import adduser_command, removeuser_command, users_command
@@ -79,6 +79,7 @@ async def post_shutdown(application: Application) -> None:  # type: ignore[type-
     http_client: httpx.AsyncClient | None = application.bot_data.get("http_client")
     if http_client:
         await http_client.aclose()
+    await close_db()
     logger.info("bot_shutdown")
 
 

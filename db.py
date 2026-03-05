@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import date as date_type, datetime, timezone
 from typing import Any
 
@@ -91,6 +92,7 @@ CREATE TABLE IF NOT EXISTS local_collection_documents (
 CREATE INDEX IF NOT EXISTS idx_conv_user_time ON conversations(user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_stats_user_date ON usage_stats(user_id, date);
 CREATE INDEX IF NOT EXISTS idx_local_docs_collection ON local_collection_documents(collection_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_dynamic_users_id ON dynamic_users(user_id);
 """
 
 _FTS_SCHEMA = """
@@ -123,12 +125,46 @@ def _today() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
 
+# ---------------------------------------------------------------------------
+# Persistent connection (reused across all DB operations)
+# ---------------------------------------------------------------------------
+_db: aiosqlite.Connection | None = None
+_db_lock = asyncio.Lock()
+
+
 async def _get_db() -> aiosqlite.Connection:
-    db = await aiosqlite.connect(settings.db_path)
-    db.row_factory = aiosqlite.Row
-    await db.execute("PRAGMA journal_mode=WAL")
-    await db.execute("PRAGMA foreign_keys=ON")
-    return db
+    """Return the shared persistent database connection.
+
+    The connection is initialised once in :func:`init_db` and reused for every
+    subsequent call.  This avoids the overhead of opening a new connection,
+    setting PRAGMAs and negotiating WAL mode on **every** database operation.
+
+    An asyncio.Lock guards initialisation so concurrent coroutines cannot
+    create multiple connections.
+    """
+    global _db  # noqa: PLW0603
+    if _db is not None:
+        return _db
+    async with _db_lock:
+        # Double-check after acquiring lock
+        if _db is None:
+            _db = await aiosqlite.connect(settings.db_path)
+            _db.row_factory = aiosqlite.Row
+            await _db.execute("PRAGMA journal_mode=WAL")
+            await _db.execute("PRAGMA foreign_keys=ON")
+    return _db
+
+
+async def close_db() -> None:
+    """Close the persistent connection (call at shutdown)."""
+    global _db  # noqa: PLW0603
+    async with _db_lock:
+        if _db is not None:
+            try:
+                await _db.close()
+            except Exception:
+                logger.exception("close_db_failed")
+            _db = None
 
 
 # ---------------------------------------------------------------------------
@@ -136,7 +172,11 @@ async def _get_db() -> aiosqlite.Connection:
 # ---------------------------------------------------------------------------
 
 async def init_db() -> None:
-    """Create tables if they don't exist."""
+    """Create tables if they don't exist.
+
+    Also initialises the persistent database connection that will be reused
+    by all subsequent database operations until :func:`close_db` is called.
+    """
     db = await _get_db()
     try:
         await db.executescript(_SCHEMA)
@@ -146,8 +186,9 @@ async def init_db() -> None:
             logger.warning("fts5_init_failed_fallback_like_enabled")
         await db.commit()
         logger.info("database_initialized", path=settings.db_path)
-    finally:
-        await db.close()
+    except Exception:
+        logger.exception("init_db_failed")
+        raise
 
 
 async def save_message(
@@ -177,8 +218,6 @@ async def save_message(
         await db.commit()
     except Exception:
         logger.exception("save_message_failed", user_id=user_id, role=role)
-    finally:
-        await db.close()
 
 
 async def get_history(user_id: int, limit: int = 20) -> list[dict[str, str]]:
@@ -202,8 +241,6 @@ async def get_history(user_id: int, limit: int = 20) -> list[dict[str, str]]:
     except Exception:
         logger.exception("get_history_failed", user_id=user_id)
         return []
-    finally:
-        await db.close()
 
 
 async def clear_history(user_id: int) -> int:
@@ -218,8 +255,6 @@ async def clear_history(user_id: int) -> int:
     except Exception:
         logger.exception("clear_history_failed", user_id=user_id)
         return 0
-    finally:
-        await db.close()
 
 
 async def update_daily_stats(
@@ -251,8 +286,6 @@ async def update_daily_stats(
         await db.commit()
     except Exception:
         logger.exception("update_daily_stats_failed", user_id=user_id)
-    finally:
-        await db.close()
 
 
 async def get_daily_stats(user_id: int, date: str | None = None) -> dict[str, Any]:
@@ -279,8 +312,6 @@ async def get_daily_stats(user_id: int, date: str | None = None) -> dict[str, An
     except Exception:
         logger.exception("get_daily_stats_failed", user_id=user_id)
         return {}
-    finally:
-        await db.close()
 
 
 async def get_all_time_stats(user_id: int) -> dict[str, Any]:
@@ -313,8 +344,6 @@ async def get_all_time_stats(user_id: int) -> dict[str, Any]:
     except Exception:
         logger.exception("get_all_time_stats_failed", user_id=user_id)
         return {}
-    finally:
-        await db.close()
 
 
 _ALLOWED_SETTING_COLUMNS: frozenset[str] = frozenset(
@@ -341,8 +370,6 @@ async def set_user_setting(user_id: int, key: str, value: str) -> None:
         await db.commit()
     except Exception:
         logger.exception("set_user_setting_failed", user_id=user_id, key=key)
-    finally:
-        await db.close()
 
 
 async def get_user_setting(user_id: int, key: str) -> str | None:
@@ -363,8 +390,6 @@ async def get_user_setting(user_id: int, key: str) -> str | None:
     except Exception:
         logger.exception("get_user_setting_failed", user_id=user_id, key=key)
         return None
-    finally:
-        await db.close()
 
 
 async def add_dynamic_user(user_id: int, added_by: int) -> bool:
@@ -380,8 +405,6 @@ async def add_dynamic_user(user_id: int, added_by: int) -> bool:
     except Exception:
         logger.exception("add_dynamic_user_failed", user_id=user_id, added_by=added_by)
         return False
-    finally:
-        await db.close()
 
 
 async def remove_dynamic_user(user_id: int) -> int:
@@ -394,8 +417,6 @@ async def remove_dynamic_user(user_id: int) -> int:
     except Exception:
         logger.exception("remove_dynamic_user_failed", user_id=user_id)
         return 0
-    finally:
-        await db.close()
 
 
 async def is_dynamic_user_allowed(user_id: int) -> bool:
@@ -411,8 +432,6 @@ async def is_dynamic_user_allowed(user_id: int) -> bool:
     except Exception:
         logger.exception("is_dynamic_user_allowed_failed", user_id=user_id)
         return False
-    finally:
-        await db.close()
 
 
 async def list_dynamic_users() -> list[int]:
@@ -427,8 +446,6 @@ async def list_dynamic_users() -> list[int]:
     except Exception:
         logger.exception("list_dynamic_users_failed")
         return []
-    finally:
-        await db.close()
 
 
 async def get_users_usage_summary(
@@ -466,8 +483,6 @@ async def get_users_usage_summary(
             int(user_id): {"total_requests": 0, "total_cost_usd": 0.0}
             for user_id in user_ids
         }
-    finally:
-        await db.close()
 
 
 async def create_local_collection(name: str) -> int | None:
@@ -484,8 +499,6 @@ async def create_local_collection(name: str) -> int | None:
     except Exception:
         logger.exception("create_local_collection_failed", name=name)
         return None
-    finally:
-        await db.close()
 
 
 async def list_local_collections() -> list[dict[str, Any]]:
@@ -506,8 +519,6 @@ async def list_local_collections() -> list[dict[str, Any]]:
     except Exception:
         logger.exception("list_local_collections_failed")
         return []
-    finally:
-        await db.close()
 
 
 async def delete_local_collection(collection_id: int) -> int:
@@ -520,8 +531,6 @@ async def delete_local_collection(collection_id: int) -> int:
     except Exception:
         logger.exception("delete_local_collection_failed", collection_id=collection_id)
         return 0
-    finally:
-        await db.close()
 
 
 async def add_local_collection_document(
@@ -551,8 +560,6 @@ async def add_local_collection_document(
             filename=filename,
         )
         return False
-    finally:
-        await db.close()
 
 
 async def list_local_collection_documents(collection_id: int) -> list[dict[str, Any]]:
@@ -573,8 +580,6 @@ async def list_local_collection_documents(collection_id: int) -> list[dict[str, 
     except Exception:
         logger.exception("list_local_collection_documents_failed", collection_id=collection_id)
         return []
-    finally:
-        await db.close()
 
 
 async def search_local_collection_documents(
@@ -621,5 +626,115 @@ async def search_local_collection_documents(
             query=query,
         )
         return []
-    finally:
-        await db.close()
+
+
+# ---------------------------------------------------------------------------
+# Batch operations (reduce round-trips)
+# ---------------------------------------------------------------------------
+
+async def save_message_pair_and_stats(
+    user_id: int,
+    user_content: str,
+    assistant_content: str,
+    reasoning_content: str | None = None,
+    model: str | None = None,
+    tokens_in: int = 0,
+    tokens_out: int = 0,
+    reasoning_tokens: int = 0,
+    cost_usd: float = 0.0,
+) -> None:
+    """Persist user + assistant messages and update daily stats in one commit.
+
+    This replaces three separate calls (save_message × 2 + update_daily_stats)
+    with a single transaction, eliminating two extra connection round-trips.
+    """
+    today = _today()
+    db = await _get_db()
+    try:
+        await db.execute(
+            """
+            INSERT INTO conversations
+                (user_id, role, content, reasoning_content, model,
+                 tokens_in, tokens_out, reasoning_tokens, cost_usd)
+            VALUES (?, 'user', ?, NULL, NULL, 0, 0, 0, 0.0)
+            """,
+            (user_id, user_content),
+        )
+        await db.execute(
+            """
+            INSERT INTO conversations
+                (user_id, role, content, reasoning_content, model,
+                 tokens_in, tokens_out, reasoning_tokens, cost_usd)
+            VALUES (?, 'assistant', ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (user_id, assistant_content, reasoning_content, model,
+             tokens_in, tokens_out, reasoning_tokens, cost_usd),
+        )
+        await db.execute(
+            """
+            INSERT INTO usage_stats
+                (user_id, date, total_requests, total_tokens_in,
+                 total_tokens_out, total_reasoning_tokens, total_cost_usd)
+            VALUES (?, ?, 1, ?, ?, ?, ?)
+            ON CONFLICT(user_id, date) DO UPDATE SET
+                total_requests = total_requests + 1,
+                total_tokens_in = total_tokens_in + excluded.total_tokens_in,
+                total_tokens_out = total_tokens_out + excluded.total_tokens_out,
+                total_reasoning_tokens = total_reasoning_tokens + excluded.total_reasoning_tokens,
+                total_cost_usd = total_cost_usd + excluded.total_cost_usd
+            """,
+            (user_id, today, tokens_in, tokens_out, reasoning_tokens, cost_usd),
+        )
+        await db.commit()
+    except Exception:
+        logger.exception("save_message_pair_and_stats_failed", user_id=user_id)
+
+
+async def get_user_stats_combined(user_id: int) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Fetch daily + all-time stats in a single connection round-trip."""
+    today = _today()
+    db = await _get_db()
+    empty_daily: dict[str, Any] = {
+        "user_id": user_id,
+        "date": today,
+        "total_requests": 0,
+        "total_tokens_in": 0,
+        "total_tokens_out": 0,
+        "total_reasoning_tokens": 0,
+        "total_cost_usd": 0.0,
+    }
+    empty_alltime: dict[str, Any] = {
+        "total_requests": 0,
+        "total_tokens_in": 0,
+        "total_tokens_out": 0,
+        "total_reasoning_tokens": 0,
+        "total_cost_usd": 0.0,
+    }
+    try:
+        cursor = await db.execute(
+            "SELECT * FROM usage_stats WHERE user_id = ? AND date = ?",
+            (user_id, today),
+        )
+        row = await cursor.fetchone()
+        daily = dict(row) if row else empty_daily
+
+        cursor = await db.execute(
+            """
+            SELECT
+                COALESCE(SUM(total_requests), 0)         AS total_requests,
+                COALESCE(SUM(total_tokens_in), 0)        AS total_tokens_in,
+                COALESCE(SUM(total_tokens_out), 0)       AS total_tokens_out,
+                COALESCE(SUM(total_reasoning_tokens), 0) AS total_reasoning_tokens,
+                COALESCE(SUM(total_cost_usd), 0.0)       AS total_cost_usd
+            FROM usage_stats
+            WHERE user_id = ?
+            """,
+            (user_id,),
+        )
+        row = await cursor.fetchone()
+        alltime = dict(row) if row else empty_alltime
+
+        return daily, alltime
+    except Exception:
+        logger.exception("get_user_stats_combined_failed", user_id=user_id)
+        return empty_daily, empty_alltime

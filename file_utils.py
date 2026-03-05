@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import io
 import zipfile
@@ -27,12 +28,8 @@ _TEXT_EXTENSIONS = {
 }
 
 
-async def image_to_base64(file_bytes: bytes, max_size_mb: float = 5.0) -> tuple[str, str]:
-    """Konwertuj obraz do base64 i zwróć ``(base64_str, mime_type)``.
-
-    :param file_bytes: Surowe bajty obrazu.
-    :param max_size_mb: Maksymalny rozmiar obrazu po kompresji.
-    """
+def _image_to_base64_sync(file_bytes: bytes, max_size_mb: float = 5.0) -> tuple[str, str]:
+    """Synchronous image compression — run via executor to avoid blocking."""
     max_bytes = int(max_size_mb * 1024 * 1024)
 
     image = Image.open(io.BytesIO(file_bytes))
@@ -72,11 +69,20 @@ async def image_to_base64(file_bytes: bytes, max_size_mb: float = 5.0) -> tuple[
     raise ValueError("Obraz jest zbyt duży (max 5MB po kompresji).")
 
 
-async def extract_text_from_pdf(file_bytes: bytes) -> str:
-    """Wyciągnij tekst z PDF i zwróć połączoną treść stron.
+async def image_to_base64(file_bytes: bytes, max_size_mb: float = 5.0) -> tuple[str, str]:
+    """Konwertuj obraz do base64 i zwróć ``(base64_str, mime_type)``.
 
-    :param file_bytes: Surowe bajty pliku PDF.
+    PIL operations are CPU-bound; delegate to a thread to keep the event loop
+    responsive for other concurrent requests.
+
+    :param file_bytes: Surowe bajty obrazu.
+    :param max_size_mb: Maksymalny rozmiar obrazu po kompresji.
     """
+    return await asyncio.to_thread(_image_to_base64_sync, file_bytes, max_size_mb)
+
+
+def _extract_text_from_pdf_sync(file_bytes: bytes) -> str:
+    """Synchronous PDF extraction — run via executor."""
     chunks: list[str] = []
     with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
         for page in pdf.pages:
@@ -86,21 +92,35 @@ async def extract_text_from_pdf(file_bytes: bytes) -> str:
     return "\n\n".join(chunks)
 
 
-async def extract_text_from_docx(file_bytes: bytes) -> str:
-    """Wyciągnij tekst z DOCX i zwróć połączoną treść akapitów.
+async def extract_text_from_pdf(file_bytes: bytes) -> str:
+    """Wyciągnij tekst z PDF i zwróć połączoną treść stron.
 
-    :param file_bytes: Surowe bajty pliku DOCX.
+    PDF parsing is CPU-bound; delegate to a thread.
+
+    :param file_bytes: Surowe bajty pliku PDF.
     """
+    return await asyncio.to_thread(_extract_text_from_pdf_sync, file_bytes)
+
+
+def _extract_text_from_docx_sync(file_bytes: bytes) -> str:
+    """Synchronous DOCX extraction — run via executor."""
     document = Document(io.BytesIO(file_bytes))
     lines = [paragraph.text.strip() for paragraph in document.paragraphs if paragraph.text]
     return "\n".join(line for line in lines if line)
 
 
-async def extract_text_from_zip(file_bytes: bytes) -> dict[str, str]:
-    """Wypakuj ZIP i zwróć mapę ``{filename: content}`` dla plików tekstowych.
+async def extract_text_from_docx(file_bytes: bytes) -> str:
+    """Wyciągnij tekst z DOCX i zwróć połączoną treść akapitów.
 
-    :param file_bytes: Surowe bajty archiwum ZIP.
+    DOCX parsing is CPU-bound; delegate to a thread.
+
+    :param file_bytes: Surowe bajty pliku DOCX.
     """
+    return await asyncio.to_thread(_extract_text_from_docx_sync, file_bytes)
+
+
+def _extract_text_from_zip_sync(file_bytes: bytes) -> dict[str, str]:
+    """Synchronous ZIP extraction — run via executor."""
     extracted: dict[str, str] = {}
     with zipfile.ZipFile(io.BytesIO(file_bytes)) as archive:
         for member in archive.infolist():
@@ -122,6 +142,16 @@ async def extract_text_from_zip(file_bytes: bytes) -> dict[str, str]:
             if text.strip():
                 extracted[member.filename] = text
     return extracted
+
+
+async def extract_text_from_zip(file_bytes: bytes) -> dict[str, str]:
+    """Wypakuj ZIP i zwróć mapę ``{filename: content}`` dla plików tekstowych.
+
+    ZIP extraction with multiple file reads is I/O-bound; delegate to a thread.
+
+    :param file_bytes: Surowe bajty archiwum ZIP.
+    """
+    return await asyncio.to_thread(_extract_text_from_zip_sync, file_bytes)
 
 
 def smart_truncate(text: str, max_chars: int = 100_000) -> str:
