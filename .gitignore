@@ -11,3 +11,6 @@ venv/
 .DS_Store
 .vscode/
 .idea/
+gdrive_export/
+token.json
+credentials.json
