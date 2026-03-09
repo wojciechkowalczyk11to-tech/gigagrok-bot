@@ -1,0 +1,153 @@
+*** Begin Patch
+*** Update File: config.py
+@@
+-    xai_model_reasoning: str = "grok-4-1-fast-reasoning"
+-    xai_model_fast: str = "grok-4-1-fast"
++    # Default model slugs point to the Grok 4.20 experimental beta models.
++    # See the Early Access Guide for details: the reasoning variant provides deep
++    # chain‑of‑thought reasoning, while the non‑reasoning variant offers a
++    # lightweight response with lower latency.
++    xai_model_reasoning: str = "grok-4.20-experimental-beta-0304-reasoning"
++    xai_model_fast: str = "grok-4.20-experimental-beta-0304-non-reasoning"
+*** End Patch
+*** Begin Patch
+*** Update File: handlers/search.py
+@@
+ async def websearch_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+-    """Handle /websearch <query> using xAI server-side web_search tool."""
++    """Handle /websearch <query> using the built‑in web_search tool."""
+@@
+-    await _run_search_command(
+-        update=update,
+-        context=context,
+-        query=query,
+-        system_prompt=system_prompt,
+-        status_text="🔍 Szukam w internecie...",
+-        search_params={"search": {"enabled": True}},
+-        command_name="websearch_command",
+-    )
++    # Use the built‑in web_search tool rather than the legacy search parameter.
++    await _run_search_command(
++        update=update,
++        context=context,
++        query=query,
++        system_prompt=system_prompt,
++        status_text="🔍 Szukam w internecie...",
++        tool={"type": "web_search"},
++        command_name="websearch_command",
++    )
+@@
+ async def xsearch_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+-    """Handle /xsearch <query> using xAI server-side x_search tool."""
++    """Handle /xsearch <query> using the built‑in x_search tool."""
+@@
+-    await _run_search_command(
+-        update=update,
+-        context=context,
+-        query=query,
+-        system_prompt=system_prompt,
+-        status_text="🐦 Szukam na X/Twitter...",
+-        search_params={"search": {"enabled": True}},
+-        command_name="xsearch_command",
+-    )
++    # Use the built‑in x_search tool for X/Twitter search.
++    await _run_search_command(
++        update=update,
++        context=context,
++        query=query,
++        system_prompt=system_prompt,
++        status_text="🐦 Szukam na X/Twitter...",
++        tool={"type": "x_search"},
++        command_name="xsearch_command",
++    )
+@@
+-async def _run_search_command(
+-    update: Update,
+-    context: ContextTypes.DEFAULT_TYPE,
+-    query: str,
+-    system_prompt: str,
+-    status_text: str,
+-    search_params: dict | None = None,
+-    command_name: str = "",
+-) -> None:
+-    """Execute a streaming search command with a dedicated tool."""
++async def _run_search_command(
++    update: Update,
++    context: ContextTypes.DEFAULT_TYPE,
++    query: str,
++    system_prompt: str,
++    status_text: str,
++    *,
++    tool: dict | None = None,
++    command_name: str = "",
++) -> None:
++    """Execute a streaming search command using a built‑in tool.
++
++    This helper performs a single turn query using the provided tool definition.
++    The `tool` argument should be a dictionary with a ``type`` key matching one
++    of xAI's built‑in tools, e.g. ``{"type": "web_search"}`` or
++    ``{"type": "x_search"}``. If ``None`` is passed, no tool will be
++    specified.
++    """
+@@
+-        async for event_type, data in grok.chat_stream(
+-            messages=messages,
+-            model=settings.xai_model_reasoning,
+-            max_tokens=settings.max_output_tokens,
+-            reasoning_effort="medium",
+-            search=search_params,
+-        ):
++        async for event_type, data in grok.chat_stream(
++            messages=messages,
++            model=settings.xai_model_reasoning,
++            max_tokens=settings.max_output_tokens,
++            reasoning_effort="medium",
++            tools=[tool] if tool else None,
++        ):
+*** End Patch
+*** End Patch
+*** Begin Patch
+*** Update File: handlers/start.py
+@@
+-_START_TEXT = (
+-    "🧠 <b>GigaGrok</b> — Twój asystent AI\n"
+-    "\n"
+-    "Zasilany przez <b>Grok 4.1 Fast Reasoning</b>\n"
+-    "• 2M tokenów kontekstu\n"
+-    "• Deep reasoning (chain-of-thought)\n"
+-    "• Web search, X search, code execution\n"
+-    "• Analiza obrazów i dokumentów\n"
+-    "\n"
+-    "Wyślij mi wiadomość, a odpowiem z pełną mocą reasoning.\n"
+-    "\n"
+-    "Wpisz /help po listę komend."
+-)
++# Displayed to users when they start interacting with the bot.  Updated to
++# reflect the Grok 4.20 experimental beta models.  Note that the model slugs
++# themselves are configured in config.py; this text is purely informational.
++_START_TEXT = (
++    "🧠 <b>GigaGrok</b> — Twój asystent AI\n"
++    "\n"
++    "Zasilany przez <b>Grok 4.20 Experimental Beta – Reasoning</b>\n"
++    "• Do 2M tokenów kontekstu\n"
++    "• Głębokie chain‑of‑thought reasoning\n"
++    "• Wbudowane narzędzia: web/X search, code execution\n"
++    "• Analiza obrazów i dokumentów\n"
++    "\n"
++    "Wyślij mi wiadomość, a odpowiem z pełną mocą reasoning.\n"
++    "\n"
++    "Wpisz /help po listę komend."
++)
+@@ _HELP_DESCRIPTIONS = {
+-    "help_fast": (
+-        "⚡ <b>/fast</b>\n\n"
+-        "Szybka odpowiedź bez reasoning (model grok-4-1-fast).\n\n"
+-        "Przykład: <code>/fast Co to jest Python?</code>"
+-    ),
++    "help_fast": (
++        "⚡ <b>/fast</b>\n\n"
++        "Szybka odpowiedź bez reasoning (model grok-4.20-experimental-beta-0304-non-reasoning).\n\n"
++        "Przykład: <code>/fast Co to jest Python?</code>"
++    ),
+*** End Patch
+*** End Patch
