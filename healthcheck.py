@@ -60,7 +60,7 @@ def _get_last_message_age(db_path: str) -> str:
 
 
 def start_healthcheck_server(
-    db_path: str, host: str = "0.0.0.0", port: int = 8080
+    db_path: str, host: str = "0.0.0.0", port: int = 8080  # nosec B104 – intentional bind for health endpoint
 ) -> ThreadingHTTPServer:
     """Start `/health` endpoint in a daemon thread and return server handle."""
     started_at = time.monotonic()

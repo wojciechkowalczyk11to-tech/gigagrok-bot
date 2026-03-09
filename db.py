@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import date as date_type, datetime, timezone
+from datetime import datetime, timezone
 from typing import Any
 
 import aiosqlite
@@ -364,7 +364,7 @@ async def set_user_setting(user_id: int, key: str, value: str) -> None:
             (user_id,),
         )
         await db.execute(
-            f"UPDATE user_settings SET {key} = ?, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?",  # key validated above
+            f"UPDATE user_settings SET {key} = ?, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?",  # nosec B608 – key validated against allowlist above
             (value, user_id),
         )
         await db.commit()
@@ -380,7 +380,7 @@ async def get_user_setting(user_id: int, key: str) -> str | None:
     db = await _get_db()
     try:
         cursor = await db.execute(
-            f"SELECT {key} FROM user_settings WHERE user_id = ?",  # key validated above
+            f"SELECT {key} FROM user_settings WHERE user_id = ?",  # nosec B608 – key validated against allowlist above
             (user_id,),
         )
         row = await cursor.fetchone()
@@ -459,7 +459,7 @@ async def get_users_usage_summary(
     query = (
         "SELECT user_id, COALESCE(SUM(total_requests), 0) AS total_requests, "
         "COALESCE(SUM(total_cost_usd), 0.0) AS total_cost_usd "
-        f"FROM usage_stats WHERE user_id IN ({placeholders}) GROUP BY user_id"
+        f"FROM usage_stats WHERE user_id IN ({placeholders}) GROUP BY user_id"  # nosec B608 – placeholders are only "?" markers, values passed separately
     )
 
     db = await _get_db()

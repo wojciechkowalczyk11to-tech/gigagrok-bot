@@ -73,7 +73,7 @@ async def _transcribe_with_groq(
 
 def _text_to_ogg_opus(text: str) -> bytes:
     """Generate OGG/OPUS from text using gTTS + pydub."""
-    with tempfile.TemporaryDirectory(dir="/tmp") as tmp_dir:
+    with tempfile.TemporaryDirectory(dir="/tmp") as tmp_dir:  # nosec B108 – intentional temp dir for audio processing
         tmp = Path(tmp_dir)
         mp3_path = tmp / "response.mp3"
         ogg_path = tmp / "response.ogg"
