@@ -170,7 +170,7 @@ def main() -> None:
 
     try:
         app.run_webhook(
-            listen="0.0.0.0",
+            listen="0.0.0.0",  # nosec B104 – webhook server must bind all interfaces
             port=settings.webhook_port,
             url_path=settings.webhook_path,
             webhook_url=webhook_url,
