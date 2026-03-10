@@ -152,7 +152,6 @@ async def gigagrok_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             model=settings.xai_model_reasoning,
             max_tokens=settings.gigagrok_max_output_tokens,
             tools=tools if tools else None,
-            search={"search": {"enabled": True}},
         ):
             if event_type == "reasoning":
                 full_reasoning += str(data)
@@ -163,7 +162,7 @@ async def gigagrok_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                 status_text = _TOOL_STATUS.get(tool_name, f"🛠 Używam: {tool_name}")
                 try:
                     await sent.edit_text(
-                        "🚀 <b>GIGAGROK MODE</b>\n" f"{escape_html(status_text)}",
+                        f"🚀 <b>GIGAGROK MODE</b>\n{escape_html(status_text)}",
                         parse_mode="HTML",
                     )
                 except Exception:

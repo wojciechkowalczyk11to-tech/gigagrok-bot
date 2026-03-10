@@ -11,19 +11,15 @@ from utils import check_access
 
 logger = structlog.get_logger(__name__)
 
-# ---------------------------------------------------------------------------
-# /start
-# ---------------------------------------------------------------------------
 _START_TEXT = (
     "🧠 <b>GigaGrok</b> — Twój asystent AI\n"
     "\n"
-    "Zasilany przez <b>Grok 4.1 Fast Reasoning</b>\n"
-    "• 2M tokenów kontekstu\n"
-    "• Deep reasoning (chain-of-thought)\n"
-    "• Web search, X search, code execution\n"
+    "Zasilany przez <b>Grok 4.20 beta</b> (model eksperymentalny)\n"
+    "• Domyślny tryb reasoning + szybki tryb non-reasoning\n"
+    "• Wbudowane narzędzia: web search i X search\n"
     "• Analiza obrazów i dokumentów\n"
     "\n"
-    "Wyślij mi wiadomość, a odpowiem z pełną mocą reasoning.\n"
+    "Wyślij wiadomość — odpowiem modelem reasoning i podam zwięzłe wnioski.\n"
     "\n"
     "Wpisz /help po listę komend."
 )
@@ -42,9 +38,6 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     await update.message.reply_text(_START_TEXT, parse_mode="HTML")
 
 
-# ---------------------------------------------------------------------------
-# /help
-# ---------------------------------------------------------------------------
 _HELP_TEXT = (
     "📚 <b>Komendy GigaGrok</b>\n"
     "\n"
@@ -87,17 +80,17 @@ _HELP_KEYBOARD = InlineKeyboardMarkup(
 _HELP_DESCRIPTIONS: dict[str, str] = {
     "help_chat": (
         "💬 <b>Chat</b>\n\n"
-        "Wyślij dowolną wiadomość tekstową, a bot odpowie z pełnym reasoning.\n\n"
+        "Wyślij dowolną wiadomość tekstową, a bot odpowie domyślnym modelem reasoning Grok 4.20 beta.\n\n"
         "Przykład: po prostu napisz pytanie."
     ),
     "help_fast": (
         "⚡ <b>/fast</b>\n\n"
-        "Szybka odpowiedź bez reasoning (model grok-4-1-fast).\n\n"
+        "Szybka odpowiedź trybem non-reasoning (Grok 4.20 beta).\n\n"
         "Przykład: <code>/fast Co to jest Python?</code>"
     ),
     "help_think": (
         "🧠 <b>/think</b>\n\n"
-        "Tryb głębokiego myślenia z anti-halucynacjami.\n\n"
+        "Tryb głębokiego myślenia z dodatkowymi zasadami jakości.\n\n"
         "Przykład: <code>/think Porównaj React vs Vue w 2026</code>"
     ),
     "help_web": (
@@ -112,8 +105,8 @@ _HELP_DESCRIPTIONS: dict[str, str] = {
     ),
     "help_gigagrok": (
         "🚀 <b>/gigagrok</b>\n\n"
-        "FULL POWER mode — kolekcja + web + X + kod.\n"
-        "Automatycznie dobiera narzędzia.\n\n"
+        "Tryb rozszerzony: historia + web/X + analiza kodu.\n"
+        "Automatycznie dobiera narzędzia, gdy to pomaga w odpowiedzi.\n\n"
         "Przykład: <code>/gigagrok Przeanalizuj trend AI w Polsce</code>"
     ),
     "help_file": (
@@ -161,7 +154,9 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     text = _HELP_TEXT
     if settings.is_admin(user_id):
         text += _HELP_ADMIN_SECTION
-    await update.message.reply_text(text, parse_mode="HTML", reply_markup=_HELP_KEYBOARD)
+    await update.message.reply_text(
+        text, parse_mode="HTML", reply_markup=_HELP_KEYBOARD
+    )
 
 
 async def help_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

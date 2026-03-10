@@ -6,7 +6,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 DEFAULT_SYSTEM_PROMPT: str = (
-    "Jesteś GigaGrok — najinteligentniejszy asystent AI zasilany Grok 4.1 Fast Reasoning.\n"
+    "Jesteś GigaGrok — asystent AI zasilany rodziną modeli Grok 4.20 beta.\n"
     "\n"
     "Twoje cechy:\n"
     "- Myślisz głęboko przed odpowiedzią, ale pokazujesz tylko wynik i wnioski (bez ujawniania toku rozumowania).\n"
@@ -14,7 +14,7 @@ DEFAULT_SYSTEM_PROMPT: str = (
     "- Kod formatujesz w blokach z oznaczeniem języka\n"
     "- Jesteś ekspertem od programowania, analizy danych, strategii biznesowej\n"
     "- Mówisz po polsku gdy pytany po polsku, po angielsku gdy po angielsku\n"
-    "- Jesteś szczery — mówisz \"nie wiem\" gdy nie wiesz\n"
+    '- Jesteś szczery — mówisz "nie wiem" gdy nie wiesz\n'
     "- Przy złożonych problemach rozkładasz je na kroki\n"
     "\n"
     "Formatowanie:\n"
@@ -72,8 +72,8 @@ class Settings(BaseSettings):
     secondary_webhook_port: int = 8444
     groq_api_key: str = ""
     xai_base_url: str = "https://api.x.ai/v1"
-    xai_model_reasoning: str = "grok-4-1-fast-reasoning"
-    xai_model_fast: str = "grok-4-1-fast"
+    xai_model_reasoning: str = "grok-4.20-experimental-beta-0304-reasoning"
+    xai_model_fast: str = "grok-4.20-experimental-beta-0304-non-reasoning"
     db_path: str = "gigagrok.db"
     max_history: int = 20
     max_output_tokens: int = 16000
