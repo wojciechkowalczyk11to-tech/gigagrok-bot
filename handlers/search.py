@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import time
-
 import structlog
 from telegram import Update
 from telegram.ext import ContextTypes
@@ -11,13 +10,28 @@ from telegram.ext import ContextTypes
 from config import settings
 from db import calculate_cost, save_message_pair_and_stats
 from grok_client import GrokClient
-from utils import check_access, escape_html, format_footer, markdown_to_telegram_html, split_message
+from utils import (
+    check_access,
+    escape_html,
+    format_footer,
+    markdown_to_telegram_html,
+    split_message,
+)
 
 logger = structlog.get_logger(__name__)
 
 
+def _build_search_tools(search_type: str) -> list[dict[str, str]]:
+    """Build built-in xAI search tools for a search command."""
+    if search_type == "web":
+        return [{"type": "web_search"}]
+    if search_type == "x":
+        return [{"type": "x_search"}]
+    raise ValueError(f"Nieobsługiwany typ wyszukiwania: {search_type}")
+
+
 async def websearch_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle /websearch <query> using xAI server-side web_search tool."""
+    """Handle /websearch <query> using xAI built-in ``web_search`` tool."""
     query = " ".join(context.args).strip()
     if not query:
         if update.message:
@@ -33,13 +47,13 @@ async def websearch_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         query=query,
         system_prompt=system_prompt,
         status_text="🔍 Szukam w internecie...",
-        search_params={"search": {"enabled": True}},
+        tools=_build_search_tools("web"),
         command_name="websearch_command",
     )
 
 
 async def xsearch_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle /xsearch <query> using xAI server-side x_search tool."""
+    """Handle /xsearch <query> using xAI built-in ``x_search`` tool."""
     query = " ".join(context.args).strip()
     if not query:
         if update.message:
@@ -55,7 +69,7 @@ async def xsearch_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         query=query,
         system_prompt=system_prompt,
         status_text="🐦 Szukam na X/Twitter...",
-        search_params={"search": {"enabled": True}},
+        tools=_build_search_tools("x"),
         command_name="xsearch_command",
     )
 
@@ -66,10 +80,10 @@ async def _run_search_command(
     query: str,
     system_prompt: str,
     status_text: str,
-    search_params: dict | None = None,
-    command_name: str = "",
+    tools: list[dict[str, str]],
+    command_name: str,
 ) -> None:
-    """Execute a streaming search command with a dedicated tool."""
+    """Execute a streaming search command with xAI built-in tools."""
     if not update.effective_user or not update.message:
         return
     if not await check_access(update, settings):
@@ -81,9 +95,19 @@ async def _run_search_command(
         await update.message.reply_text("❌ Klient Grok nie został zainicjalizowany.")
         return
 
-    logger.info(command_name, user_id=user_id, query_len=len(query))
+    logger.info(command_name, user_id=user_id, query_len=len(query), tools=tools)
 
-    sent = await update.message.reply_text(f"{status_text}", parse_mode="HTML")
+    try:
+        sent = await update.message.reply_text(status_text, parse_mode="HTML")
+    except Exception as exc:
+        logger.error(
+            "search_status_message_failed",
+            command=command_name,
+            user_id=user_id,
+            error=str(exc),
+        )
+        return
+
     start_time = time.time()
     full_content = ""
     full_reasoning = ""
@@ -101,7 +125,7 @@ async def _run_search_command(
             model=settings.xai_model_reasoning,
             max_tokens=settings.max_output_tokens,
             reasoning_effort="medium",
-            search=search_params,
+            tools=tools,
         ):
             if event_type == "reasoning":
                 full_reasoning += str(data)
@@ -111,8 +135,13 @@ async def _run_search_command(
                         f"{status_text}\n\n🛠 Używam narzędzia: <code>{escape_html(str(data))}</code>",
                         parse_mode="HTML",
                     )
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.warning(
+                        "search_tool_status_edit_failed",
+                        command=command_name,
+                        user_id=user_id,
+                        error=str(exc),
+                    )
             elif event_type == "content":
                 full_content += str(data)
                 now = time.time()
@@ -122,20 +151,37 @@ async def _run_search_command(
                         display += "\n\n<i>... (kontynuacja)</i>"
                     try:
                         await sent.edit_text(display, parse_mode="HTML")
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        logger.warning(
+                            "search_stream_edit_failed",
+                            command=command_name,
+                            user_id=user_id,
+                            error=str(exc),
+                        )
                     last_edit = now
             elif event_type == "done":
                 usage = data if isinstance(data, dict) else {}
     except Exception as exc:
-        logger.error("search_api_error", command=command_name, user_id=user_id, error=str(exc))
-        await sent.edit_text(f"❌ Błąd API: {escape_html(str(exc))}", parse_mode="HTML")
+        logger.error(
+            "search_api_error", command=command_name, user_id=user_id, error=str(exc)
+        )
+        try:
+            await sent.edit_text(
+                "❌ Nie udało się wykonać wyszukiwania. Spróbuj ponownie za chwilę."
+            )
+        except Exception as send_exc:
+            logger.warning(
+                "search_error_edit_failed",
+                command=command_name,
+                user_id=user_id,
+                error=str(send_exc),
+            )
         return
 
     elapsed = time.time() - start_time
-    tokens_in = usage.get("prompt_tokens", 0)
-    tokens_out = usage.get("completion_tokens", 0)
-    reasoning_tokens = usage.get("reasoning_tokens", 0)
+    tokens_in = int(usage.get("prompt_tokens", 0) or 0)
+    tokens_out = int(usage.get("completion_tokens", 0) or 0)
+    reasoning_tokens = int(usage.get("reasoning_tokens", 0) or 0)
     cost = calculate_cost(tokens_in, tokens_out, reasoning_tokens)
 
     footer = format_footer(
@@ -146,30 +192,52 @@ async def _run_search_command(
         cost,
         elapsed,
     )
-    final_text = f"{markdown_to_telegram_html(full_content)}\n\n<code>{escape_html(footer)}</code>"
+    safe_content = (
+        full_content
+        or "Nie udało się znaleźć wystarczających danych dla tego zapytania."
+    )
+    final_text = f"{markdown_to_telegram_html(safe_content)}\n\n<code>{escape_html(footer)}</code>"
     parts = split_message(final_text, max_length=4000)
 
     try:
         await sent.edit_text(parts[0], parse_mode="HTML")
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning(
+            "search_final_edit_failed",
+            command=command_name,
+            user_id=user_id,
+            error=str(exc),
+        )
     for part in parts[1:]:
         try:
             await update.message.reply_text(part, parse_mode="HTML")
-        except Exception:
-            logger.exception("search_send_part_failed", command=command_name, user_id=user_id)
+        except Exception as exc:
+            logger.exception(
+                "search_send_part_failed",
+                command=command_name,
+                user_id=user_id,
+                error=str(exc),
+            )
 
-    await save_message_pair_and_stats(
-        user_id,
-        user_content=query,
-        assistant_content=full_content,
-        reasoning_content=full_reasoning,
-        model=settings.xai_model_reasoning,
-        tokens_in=tokens_in,
-        tokens_out=tokens_out,
-        reasoning_tokens=reasoning_tokens,
-        cost_usd=cost,
-    )
+    try:
+        await save_message_pair_and_stats(
+            user_id,
+            user_content=query,
+            assistant_content=safe_content,
+            reasoning_content=full_reasoning,
+            model=settings.xai_model_reasoning,
+            tokens_in=tokens_in,
+            tokens_out=tokens_out,
+            reasoning_tokens=reasoning_tokens,
+            cost_usd=cost,
+        )
+    except Exception as exc:
+        logger.error(
+            "search_persist_failed",
+            command=command_name,
+            user_id=user_id,
+            error=str(exc),
+        )
 
     logger.info(
         "search_complete",

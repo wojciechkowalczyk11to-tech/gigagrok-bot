@@ -11,29 +11,70 @@ import structlog
 
 logger = structlog.get_logger(__name__)
 
-# Retry settings
 _MAX_RETRIES: int = 3
 _RETRY_DELAYS: tuple[float, ...] = (1.0, 2.0, 4.0)
 _RATE_LIMIT_DELAY: float = 5.0
 
 
 class GrokClient:
-    """Async HTTP client for the xAI chat completions API."""
+    """Async HTTP client for xAI ``/chat/completions`` requests."""
 
     def __init__(self, api_key: str, base_url: str = "https://api.x.ai/v1") -> None:
-        self._api_key = api_key
         self._base_url = base_url.rstrip("/")
         self._client = httpx.AsyncClient(
-            timeout=httpx.Timeout(120.0),
-            headers={
-                "Authorization": f"Bearer {api_key}",
-            },
+            timeout=httpx.Timeout(connect=15.0, read=120.0, write=30.0, pool=15.0),
+            headers={"Authorization": f"Bearer {api_key}"},
         )
         self._semaphore = asyncio.Semaphore(5)
 
-    # ------------------------------------------------------------------
-    # Streaming
-    # ------------------------------------------------------------------
+    def _build_chat_body(
+        self,
+        messages: list[dict[str, Any]],
+        model: str,
+        *,
+        stream: bool,
+        max_tokens: int,
+        reasoning_effort: str | None,
+        tools: list[dict[str, Any]] | None,
+        search: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        """Build a chat body with a single, validated shape."""
+        body: dict[str, Any] = {
+            "model": model,
+            "messages": messages,
+            "stream": stream,
+            "max_tokens": max_tokens,
+        }
+        if reasoning_effort:
+            body["reasoning"] = {"effort": reasoning_effort}
+        if tools:
+            body["tools"] = tools
+        if search:
+            logger.warning("legacy_search_param_used")
+            body.update(search)
+        return body
+
+    async def _sleep_before_retry(self, attempt: int, *, reason: str) -> None:
+        if reason == "rate_limit":
+            await asyncio.sleep(_RATE_LIMIT_DELAY)
+            return
+        delay = _RETRY_DELAYS[min(attempt, len(_RETRY_DELAYS) - 1)]
+        await asyncio.sleep(delay)
+
+    def _extract_tool_name(self, tool_call: dict[str, Any]) -> str | None:
+        """Extract tool name from streaming tool_call deltas."""
+        if not isinstance(tool_call, dict):
+            return None
+        tool_type = tool_call.get("type")
+        if isinstance(tool_type, str) and tool_type:
+            return tool_type
+        function_data = tool_call.get("function")
+        if isinstance(function_data, dict):
+            function_name = function_data.get("name")
+            if isinstance(function_name, str) and function_name:
+                return function_name
+        return None
+
     async def chat_stream(
         self,
         messages: list[dict[str, Any]],
@@ -43,29 +84,16 @@ class GrokClient:
         tools: list[dict[str, Any]] | None = None,
         search: dict[str, Any] | None = None,
     ) -> AsyncGenerator[tuple[str, Any], None]:
-        """Yield ``(event_type, data)`` tuples from a streaming chat request.
-
-        Event types:
-        * ``("reasoning", chunk_text)``
-        * ``("content", chunk_text)``
-        * ``("status", status_msg)``
-        * ``("done", usage_dict)``
-        """
-        body: dict[str, Any] = {
-            "model": model,
-            "messages": messages,
-            "stream": True,
-            "max_tokens": max_tokens,
-        }
-
-        if reasoning_effort:
-            body["reasoning"] = {"effort": reasoning_effort}
-
-        if tools:
-            body["tools"] = tools
-
-        if search:
-            body.update(search)
+        """Yield ``(event_type, data)`` tuples from a streaming chat request."""
+        body = self._build_chat_body(
+            messages,
+            model,
+            stream=True,
+            max_tokens=max_tokens,
+            reasoning_effort=reasoning_effort,
+            tools=tools,
+            search=search,
+        )
 
         last_error: Exception | None = None
         for attempt in range(_MAX_RETRIES):
@@ -89,91 +117,86 @@ class GrokClient:
                             )
                         else:
                             async for line in response.aiter_lines():
-                                line = line.strip()
-                                if not line or not line.startswith("data: "):
+                                payload_line = line.strip()
+                                if not payload_line.startswith("data: "):
                                     continue
-
-                                payload = line[6:]  # strip "data: "
+                                payload = payload_line[6:]
                                 if payload == "[DONE]":
                                     break
-
                                 try:
                                     chunk = json.loads(payload)
                                 except json.JSONDecodeError:
+                                    logger.warning("stream_json_decode_failed")
                                     continue
 
-                                choices = chunk.get("choices", [])
-                                if not choices:
+                                choices = chunk.get("choices")
+                                if not isinstance(choices, list) or not choices:
                                     continue
-
                                 choice = choices[0]
-                                delta = choice.get("delta", {})
+                                if not isinstance(choice, dict):
+                                    continue
+                                delta = choice.get("delta")
+                                if not isinstance(delta, dict):
+                                    continue
 
-                                # Reasoning tokens come first
-                                if "reasoning_content" in delta and delta["reasoning_content"]:
-                                    yield ("reasoning", delta["reasoning_content"])
+                                reasoning_chunk = delta.get("reasoning_content")
+                                if isinstance(reasoning_chunk, str) and reasoning_chunk:
+                                    yield ("reasoning", reasoning_chunk)
 
                                 tool_calls = delta.get("tool_calls")
                                 if isinstance(tool_calls, list):
                                     for tool_call in tool_calls:
-                                        if not isinstance(tool_call, dict):
-                                            continue
-                                        function_data = tool_call.get("function", {})
-                                        if not isinstance(function_data, dict):
-                                            continue
-                                        tool_name = function_data.get("name")
-                                        if isinstance(tool_name, str) and tool_name:
-                                            yield ("tool_use", tool_name)
+                                        if isinstance(tool_call, dict):
+                                            tool_name = self._extract_tool_name(
+                                                tool_call
+                                            )
+                                            if tool_name:
+                                                yield ("tool_use", tool_name)
 
-                                if "content" in delta and delta["content"]:
-                                    yield ("content", delta["content"])
+                                content_chunk = delta.get("content")
+                                if isinstance(content_chunk, str) and content_chunk:
+                                    yield ("content", content_chunk)
 
-                                # Usage in final chunk
                                 usage_raw = chunk.get("usage")
-                                if usage_raw:
-                                    details = usage_raw.get("completion_tokens_details", {})
+                                if isinstance(usage_raw, dict):
+                                    details = usage_raw.get("completion_tokens_details")
+                                    completion_details = (
+                                        details if isinstance(details, dict) else {}
+                                    )
                                     yield (
                                         "done",
                                         {
-                                            "prompt_tokens": usage_raw.get("prompt_tokens", 0),
-                                            "completion_tokens": usage_raw.get("completion_tokens", 0),
-                                            "reasoning_tokens": details.get("reasoning_tokens", 0),
+                                            "prompt_tokens": int(
+                                                usage_raw.get("prompt_tokens", 0) or 0
+                                            ),
+                                            "completion_tokens": int(
+                                                usage_raw.get("completion_tokens", 0)
+                                                or 0
+                                            ),
+                                            "reasoning_tokens": int(
+                                                completion_details.get(
+                                                    "reasoning_tokens", 0
+                                                )
+                                                or 0
+                                            ),
                                         },
                                     )
-                            # Successful — exit retry loop
                             return
 
-                # Semaphore released — handle 429 retry outside
                 if rate_limited:
-                    logger.warning(
-                        "grok_rate_limited",
-                        attempt=attempt + 1,
-                        delay=_RATE_LIMIT_DELAY,
-                    )
-                    await asyncio.sleep(_RATE_LIMIT_DELAY)
-                    continue
-
+                    logger.warning("grok_rate_limited", attempt=attempt + 1)
+                    await self._sleep_before_retry(attempt, reason="rate_limit")
             except Exception as exc:
                 last_error = exc
+                logger.warning("grok_stream_retry", attempt=attempt + 1, error=str(exc))
                 if attempt < _MAX_RETRIES - 1:
-                    delay = _RETRY_DELAYS[attempt]
-                    logger.warning(
-                        "grok_stream_retry",
-                        attempt=attempt + 1,
-                        delay=delay,
-                        error=str(exc),
-                    )
-                    await asyncio.sleep(delay)
+                    await self._sleep_before_retry(attempt, reason="error")
 
-        # All retries exhausted
         if last_error:
             logger.error("grok_stream_failed", error=str(last_error))
             raise last_error
         raise RuntimeError("xAI API rate limit — wszystkie próby wyczerpane")
 
-    # ------------------------------------------------------------------
-    # Non-streaming
-    # ------------------------------------------------------------------
     async def chat(
         self,
         messages: list[dict[str, Any]],
@@ -183,73 +206,51 @@ class GrokClient:
         tools: list[dict[str, Any]] | None = None,
         search: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """Send a non-streaming chat request and return the full response."""
-        body: dict[str, Any] = {
-            "model": model,
-            "messages": messages,
-            "stream": False,
-            "max_tokens": max_tokens,
-        }
-
-        if reasoning_effort:
-            body["reasoning"] = {"effort": reasoning_effort}
-
-        if tools:
-            body["tools"] = tools
-
-        if search:
-            body.update(search)
+        """Send a non-streaming chat request and return full JSON response."""
+        body = self._build_chat_body(
+            messages,
+            model,
+            stream=False,
+            max_tokens=max_tokens,
+            reasoning_effort=reasoning_effort,
+            tools=tools,
+            search=search,
+        )
 
         last_error: Exception | None = None
         for attempt in range(_MAX_RETRIES):
             try:
                 async with self._semaphore:
-                    resp = await self._client.post(
-                        f"{self._base_url}/chat/completions",
-                        json=body,
+                    response = await self._client.post(
+                        f"{self._base_url}/chat/completions", json=body
                     )
-                # Semaphore released — handle 429 outside
-                if resp.status_code == 429:
-                    logger.warning(
-                        "grok_rate_limited",
-                        attempt=attempt + 1,
-                        delay=_RATE_LIMIT_DELAY,
-                    )
-                    await asyncio.sleep(_RATE_LIMIT_DELAY)
+                if response.status_code == 429:
+                    logger.warning("grok_rate_limited", attempt=attempt + 1)
+                    await self._sleep_before_retry(attempt, reason="rate_limit")
                     continue
-                resp.raise_for_status()
-                return resp.json()  # type: ignore[no-any-return]
+                response.raise_for_status()
+                payload = response.json()
+                if not isinstance(payload, dict):
+                    raise RuntimeError("Nieprawidłowa odpowiedź API xAI.")
+                return payload
             except Exception as exc:
                 last_error = exc
+                logger.warning("grok_chat_retry", attempt=attempt + 1, error=str(exc))
                 if attempt < _MAX_RETRIES - 1:
-                    delay = _RETRY_DELAYS[attempt]
-                    logger.warning(
-                        "grok_chat_retry",
-                        attempt=attempt + 1,
-                        delay=delay,
-                        error=str(exc),
-                    )
-                    await asyncio.sleep(delay)
+                    await self._sleep_before_retry(attempt, reason="error")
 
         if last_error:
             logger.error("grok_chat_failed", error=str(last_error))
             raise last_error
         raise RuntimeError("Unexpected: no response and no error")
 
-    # ------------------------------------------------------------------
-    # Collection search (REST — not via tools)
-    # ------------------------------------------------------------------
     async def search_collection(
         self,
         collection_id: str,
         query: str,
         max_results: int = 10,
     ) -> list[dict[str, Any]]:
-        """Search a collection via ``POST /documents/search``.
-
-        Returns a list of result dicts (each with ``content``, ``score``, etc.).
-        Raises on HTTP errors after retries.
-        """
+        """Search a collection via ``POST /documents/search``."""
         body: dict[str, Any] = {
             "query": query,
             "source": {"collection_ids": [collection_id]},
@@ -259,58 +260,50 @@ class GrokClient:
         for attempt in range(_MAX_RETRIES):
             try:
                 async with self._semaphore:
-                    resp = await self._client.post(
-                        f"{self._base_url}/documents/search",
-                        json=body,
+                    response = await self._client.post(
+                        f"{self._base_url}/documents/search", json=body
                     )
 
-                if resp.status_code == 429:
+                if response.status_code == 429:
                     logger.warning(
-                        "collection_search_rate_limited",
-                        attempt=attempt + 1,
-                        delay=_RATE_LIMIT_DELAY,
+                        "collection_search_rate_limited", attempt=attempt + 1
                     )
-                    await asyncio.sleep(_RATE_LIMIT_DELAY)
+                    await self._sleep_before_retry(attempt, reason="rate_limit")
                     continue
 
-                resp.raise_for_status()
-                data = resp.json()
+                response.raise_for_status()
+                data = response.json()
 
-                results: list[dict[str, Any]]
                 if isinstance(data, list):
-                    results = [r for r in data if isinstance(r, dict)]
+                    results = [item for item in data if isinstance(item, dict)]
                 elif isinstance(data, dict):
-                    if isinstance(data.get("results"), list):
-                        results = [r for r in data["results"] if isinstance(r, dict)]
-                    elif isinstance(data.get("data"), list):
-                        results = [r for r in data["data"] if isinstance(r, dict)]
-                    else:
-                        results = []
+                    rows = (
+                        data.get("results")
+                        if isinstance(data.get("results"), list)
+                        else data.get("data")
+                    )
+                    results = (
+                        [item for item in rows if isinstance(item, dict)]
+                        if isinstance(rows, list)
+                        else []
+                    )
                 else:
                     results = []
 
                 return results[:max_results]
             except Exception as exc:
                 last_error = exc
+                logger.warning(
+                    "collection_search_retry", attempt=attempt + 1, error=str(exc)
+                )
                 if attempt < _MAX_RETRIES - 1:
-                    delay = _RETRY_DELAYS[attempt]
-                    logger.warning(
-                        "collection_search_retry",
-                        attempt=attempt + 1,
-                        delay=delay,
-                        error=str(exc),
-                    )
-                    await asyncio.sleep(delay)
-                    continue
+                    await self._sleep_before_retry(attempt, reason="error")
 
         if last_error:
             logger.error("collection_search_failed", error=str(last_error))
             raise last_error
         raise RuntimeError("collection search — wszystkie próby wyczerpane")
 
-    # ------------------------------------------------------------------
-    # Lifecycle
-    # ------------------------------------------------------------------
     async def close(self) -> None:
         """Gracefully close the underlying HTTP client."""
         await self._client.aclose()

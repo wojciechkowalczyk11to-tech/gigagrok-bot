@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import time
-from typing import Any
-
 import structlog
 from telegram import Update
 from telegram.ext import ContextTypes
@@ -132,7 +130,9 @@ async def system_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
         if args_text.lower() == "reset":
             await set_user_setting(user_id, "system_prompt", "")
-            await update.message.reply_text("✅ System prompt zresetowany do domyślnego.")
+            await update.message.reply_text(
+                "✅ System prompt zresetowany do domyślnego."
+            )
             logger.info("system_command_reset", user_id=user_id)
             return
 
@@ -147,7 +147,7 @@ async def system_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 
 async def think_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle /think <text> — deep reasoning mode on grok-4-1-fast-reasoning.
+    """Handle /think <text> — deep reasoning mode on the default Grok 4.20 beta reasoning model.
 
     Does NOT send reasoning_effort param; instead appends quality instructions
     to the system prompt.
@@ -226,9 +226,7 @@ async def think_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
     except Exception as exc:
         logger.error("think_command_api_error", user_id=user_id, error=str(exc))
-        await sent.edit_text(
-            f"❌ Błąd API: {escape_html(str(exc))}", parse_mode="HTML"
-        )
+        await sent.edit_text(f"❌ Błąd API: {escape_html(str(exc))}", parse_mode="HTML")
         return
 
     elapsed = time.time() - start_time
@@ -301,7 +299,9 @@ async def profile_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         if not args_text or args_text == "list":
             lines = ["🎭 <b>Dostępne profile osobowości:</b>", ""]
             for name, desc in PERSONALITY_PROFILES.items():
-                lines.append(f"  • <b>{escape_html(name)}</b> — {escape_html(desc[:80])}…")
+                lines.append(
+                    f"  • <b>{escape_html(name)}</b> — {escape_html(desc[:80])}…"
+                )
             lines.extend(["", "Użyj: /profile &lt;nazwa&gt; aby aktywować"])
             lines.append("Użyj: /profile reset aby wrócić do domyślnego")
             await update.message.reply_text("\n".join(lines), parse_mode="HTML")
@@ -323,7 +323,11 @@ async def profile_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             )
             return
 
-        full_prompt = DEFAULT_SYSTEM_PROMPT.format(current_date=get_current_date()) + "\n\n" + profile_prompt
+        full_prompt = (
+            DEFAULT_SYSTEM_PROMPT.format(current_date=get_current_date())
+            + "\n\n"
+            + profile_prompt
+        )
         await set_user_setting(user_id, "system_prompt", full_prompt)
         await update.message.reply_text(
             f"✅ Aktywowano profil: <b>{escape_html(args_text)}</b>",

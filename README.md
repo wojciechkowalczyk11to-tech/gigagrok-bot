@@ -1,6 +1,6 @@
 # 🧠 GigaGrok
 
-Telegram bot powered by Grok 4.1 Fast Reasoning.
+Telegram bot powered by Grok 4.20 beta (reasoning-first).
 
 ## Setup
 1. `pip install -r requirements.txt`

@@ -3,16 +3,26 @@
 from __future__ import annotations
 
 import time
-from typing import Any
-
 import structlog
 from telegram import Update
 from telegram.ext import ContextTypes
 
 from config import DEFAULT_SYSTEM_PROMPT, settings
-from db import calculate_cost, get_history, get_user_setting, save_message_pair_and_stats
+from db import (
+    calculate_cost,
+    get_history,
+    get_user_setting,
+    save_message_pair_and_stats,
+)
 from grok_client import GrokClient
-from utils import check_access, escape_html, format_footer, get_current_date, markdown_to_telegram_html, split_message
+from utils import (
+    check_access,
+    escape_html,
+    format_footer,
+    get_current_date,
+    markdown_to_telegram_html,
+    split_message,
+)
 
 logger = structlog.get_logger(__name__)
 _PENDING_FILE_KEY = "pending_workspace_file_context"
@@ -63,9 +73,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     messages.append({"role": "user", "content": query})
 
     # 5. Placeholder
-    sent = await update.message.reply_text(
-        "🧠 <i>Grok myśli...</i>", parse_mode="HTML"
-    )
+    sent = await update.message.reply_text("🧠 <i>Grok myśli...</i>", parse_mode="HTML")
 
     # 6. Stream
     start_time = time.time()
@@ -112,9 +120,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     except Exception as exc:
         logger.error("grok_api_error", error=str(exc))
-        await sent.edit_text(
-            f"❌ Błąd API: {escape_html(str(exc))}", parse_mode="HTML"
-        )
+        await sent.edit_text(f"❌ Błąd API: {escape_html(str(exc))}", parse_mode="HTML")
         return
 
     # 7. Footer
