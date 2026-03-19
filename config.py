@@ -16,6 +16,8 @@ DEFAULT_SYSTEM_PROMPT: str = (
     "- Mówisz po polsku gdy pytany po polsku, po angielsku gdy po angielsku\n"
     '- Jesteś szczery — mówisz "nie wiem" gdy nie wiesz\n'
     "- Przy złożonych problemach rozkładasz je na kroki\n"
+    "- Masz dostęp do NEXUS MCP (44 tools: GCP, Cloudflare, GitHub, Docker, AI proxy)\n"
+    "- Możesz wywołać Claude Sonnet przez narzędzie ask_claude gdy potrzebujesz dodatkowej analizy\n"
     "\n"
     "Formatowanie:\n"
     "- Markdown\n"
@@ -72,22 +74,29 @@ class Settings(BaseSettings):
     secondary_webhook_port: int = 8444
     groq_api_key: str = ""
     xai_base_url: str = "https://api.x.ai/v1"
-    xai_model_reasoning: str = "grok-4.20-experimental-beta-0304-reasoning"
-    xai_model_fast: str = "grok-4.20-experimental-beta-0304-non-reasoning"
+    xai_model_reasoning: str = "grok-4.20-beta-latest-reasoning"
+    xai_model_fast: str = "grok-4.20-beta-latest-non-reasoning"
     db_path: str = "gigagrok.db"
     max_history: int = 20
     max_output_tokens: int = 16000
-    default_reasoning_effort: str = "high"
+    default_reasoning_effort: str = "high"  # ignored for Grok 4, kept for compat
     log_level: str = "INFO"
     github_token: str = ""
     workspace_base: str = "/opt/gigagrok/workspaces"
     workspace_whitelist: list[str] = ["/opt/gigagrok/workspaces"]
-    enable_responses_tools: bool = False
+    enable_responses_tools: bool = True
     xai_collection_id: str = "collection_54242e4b-351f-4c70-89d3-833165fca772"
     gigagrok_stage2_enabled: bool = True
     gigagrok_verify_pass: bool = True
     gigagrok_max_output_tokens: int = 16000
     gigagrok_context_messages: int = 5
+
+    # === NEXUS MCP integration ===
+    nexus_mcp_url: str = "https://mcp.nexus-oc.pl/mcp"
+    nexus_auth_token: str = ""
+
+    # === Claude bridge (ask_claude tool) ===
+    anthropic_api_key: str = ""
 
     @property
     def allowed_users(self) -> set[int]:
