@@ -14,7 +14,7 @@ from db import (
     get_user_setting,
     save_message_pair_and_stats,
 )
-from grok_client import GrokClient
+from grok_responses_client import GrokResponsesClient
 from utils import (
     check_access,
     escape_html,
@@ -28,11 +28,11 @@ logger = structlog.get_logger(__name__)
 _PENDING_FILE_KEY = "pending_workspace_file_context"
 
 # Module-level client — initialised in main.py via ``init_grok_client``
-_grok: GrokClient | None = None
+_grok: GrokResponsesClient | None = None
 
 
-def init_grok_client(client: GrokClient) -> None:
-    """Store the shared :class:`GrokClient` instance for this module."""
+def init_grok_client(client: GrokResponsesClient) -> None:
+    """Store the shared GrokResponsesClient instance for this module."""
     global _grok  # noqa: PLW0603
     _grok = client
 
@@ -75,7 +75,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     # 5. Placeholder
     sent = await update.message.reply_text("🧠 <i>Grok myśli...</i>", parse_mode="HTML")
 
-    # 6. Stream
+    # 6. Stream — NOTE: no reasoning_effort (Grok 4 /v1/responses rejects it → HTTP 400)
     start_time = time.time()
     full_content = ""
     full_reasoning = ""
@@ -87,7 +87,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             messages,
             model=settings.xai_model_reasoning,
             max_tokens=settings.max_output_tokens,
-            reasoning_effort=settings.default_reasoning_effort,
         ):
             if event_type == "reasoning":
                 full_reasoning += data
@@ -114,6 +113,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                     except Exception:
                         pass
                     last_edit = now
+
+            elif event_type == "tool_call":
+                tool_name = data.get("name", "tool") if isinstance(data, dict) else str(data)
+                try:
+                    await sent.edit_text(
+                        f"🧠 <i>Grok używa narzędzia: {escape_html(tool_name)}...</i>",
+                        parse_mode="HTML",
+                    )
+                except Exception:
+                    pass
 
             elif event_type == "done":
                 usage = data
@@ -154,7 +163,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         except Exception:
             logger.exception("send_part_failed")
 
-    # 9. Persist (single transaction instead of 3 separate calls)
+    # 9. Persist
     await save_message_pair_and_stats(
         user_id,
         user_content=raw_query,
