@@ -13,7 +13,7 @@ from telegram.ext import Application, CallbackQueryHandler, CommandHandler, Cont
 
 from config import settings
 from db import close_db, init_db
-from grok_client import GrokClient
+from grok_responses_client import GrokResponsesClient
 from healthcheck import start_healthcheck_server
 from handlers.admin import adduser_command, removeuser_command, users_command
 from handlers.chat import handle_message, init_grok_client
@@ -59,7 +59,12 @@ async def post_init(application: Application) -> None:  # type: ignore[type-arg]
     """Called after the Application is initialised."""
     await init_db()
 
-    grok = GrokClient(api_key=settings.xai_api_key, base_url=settings.xai_base_url)
+    grok = GrokResponsesClient(
+        api_key=settings.xai_api_key,
+        nexus_mcp_url=settings.nexus_mcp_url,
+        nexus_auth_token=settings.nexus_auth_token,
+        anthropic_api_key=settings.anthropic_api_key,
+    )
     init_grok_client(grok)
     application.bot_data["grok_client"] = grok
     application.bot_data["http_client"] = httpx.AsyncClient(timeout=httpx.Timeout(120.0))
@@ -67,13 +72,15 @@ async def post_init(application: Application) -> None:  # type: ignore[type-arg]
     logger.info(
         "bot_started",
         model=settings.xai_model_reasoning,
+        nexus_mcp=bool(settings.nexus_mcp_url),
+        claude_bridge=bool(settings.anthropic_api_key),
         webhook=f"{settings.webhook_url}/{settings.webhook_path}",
     )
 
 
 async def post_shutdown(application: Application) -> None:  # type: ignore[type-arg]
     """Called when the Application shuts down."""
-    grok: GrokClient | None = application.bot_data.get("grok_client")
+    grok: GrokResponsesClient | None = application.bot_data.get("grok_client")
     if grok:
         await grok.close()
     http_client: httpx.AsyncClient | None = application.bot_data.get("http_client")
@@ -87,7 +94,6 @@ async def post_shutdown(application: Application) -> None:  # type: ignore[type-
 # Global error handler
 # ---------------------------------------------------------------------------
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Łap wszystkie nieobsłużone wyjątki — user widzi ładny komunikat, nie traceback."""
     logger.error(
         "unhandled_exception",
         error=str(context.error),
@@ -110,7 +116,6 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
 # Main
 # ---------------------------------------------------------------------------
 def main() -> None:
-    """Build and run the Telegram bot in webhook mode."""
     health_server = None
     try:
         health_server = start_healthcheck_server(settings.db_path, port=8080)
@@ -126,10 +131,8 @@ def main() -> None:
         .build()
     )
 
-    # Global error handler
     app.add_error_handler(error_handler)
 
-    # Handlers
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("fast", fast_command))
@@ -157,11 +160,9 @@ def main() -> None:
     app.add_handler(MessageHandler(filters.VOICE | filters.AUDIO, handle_voice))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    # Webhook
     webhook_url = f"{settings.webhook_url}/{settings.webhook_path}"
     logger.info("starting_webhook", url=webhook_url, port=settings.webhook_port)
 
-    # Graceful shutdown on SIGTERM (e.g. systemd stop)
     def _sigterm_handler(signum: int, frame: object) -> None:
         logger.info("sigterm_received")
         app.stop_running()
