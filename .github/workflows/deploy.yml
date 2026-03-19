@@ -11,7 +11,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      id-token: write
 
     steps:
       - name: Checkout
@@ -20,21 +19,21 @@ jobs:
       - name: Authenticate to GCP
         uses: google-github-actions/auth@v2
         with:
-          credentials_json: ${{ secrets.GCP_SA_KEY }}
+          credentials_json: '${{ secrets.GCP_SA_KEY }}'
 
       - name: Set up Cloud SDK
         uses: google-github-actions/setup-gcloud@v2
         with:
           project_id: ${{ secrets.GCP_PROJECT_ID }}
 
-      - name: Configure Docker
+      - name: Configure Docker for GCR
         run: gcloud auth configure-docker gcr.io --quiet
 
-      - name: Build & Push image
+      - name: Build & Push Docker image
         run: |
           IMAGE="gcr.io/${{ secrets.GCP_PROJECT_ID }}/gigagrok:${{ github.sha }}"
           docker build -t "$IMAGE" -t "gcr.io/${{ secrets.GCP_PROJECT_ID }}/gigagrok:latest" .
-          docker push "gcr.io/${{ secrets.GCP_PROJECT_ID }}/gigagrok:${{ github.sha }}"
+          docker push "$IMAGE"
           docker push "gcr.io/${{ secrets.GCP_PROJECT_ID }}/gigagrok:latest"
 
       - name: Deploy to Cloud Run
@@ -51,22 +50,9 @@ jobs:
             --max-instances=3 \
             --timeout=300 \
             --concurrency=80 \
-            --set-env-vars="\
-              XAI_API_KEY=${{ secrets.XAI_API_KEY }},\
-              ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY }},\
-              TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }},\
-              WEBHOOK_URL=${{ secrets.WEBHOOK_URL }},\
-              WEBHOOK_SECRET=${{ secrets.WEBHOOK_SECRET }},\
-              NEXUS_AUTH_TOKEN=${{ secrets.NEXUS_AUTH_TOKEN }},\
-              NEXUS_MCP_URL=${{ secrets.NEXUS_MCP_URL }},\
-              GCP_PROJECT_ID=${{ secrets.GCP_PROJECT_ID }},\
-              XAI_MODEL_REASONING=${{ secrets.XAI_MODEL_REASONING }},\
-              XAI_MODEL_FAST=${{ secrets.XAI_MODEL_FAST }},\
-              NEXUS_TOOLS_COLLECTION_ID=${{ secrets.NEXUS_TOOLS_COLLECTION_ID }},\
-              ENABLE_RESPONSES_TOOLS=true,\
-              MAX_OUTPUT_TOKENS=16000,\
-              LOG_LEVEL=INFO\
-            "
+            --project=${{ secrets.GCP_PROJECT_ID }} \
+            --set-env-vars="XAI_API_KEY=${{ secrets.XAI_API_KEY }},ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY }},TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }},WEBHOOK_URL=${{ secrets.WEBHOOK_URL }},WEBHOOK_SECRET=${{ secrets.WEBHOOK_SECRET }},NEXUS_AUTH_TOKEN=${{ secrets.NEXUS_AUTH_TOKEN }},NEXUS_MCP_URL=${{ secrets.NEXUS_MCP_URL }},GCP_PROJECT_ID=${{ secrets.GCP_PROJECT_ID }},XAI_MODEL_REASONING=${{ secrets.XAI_MODEL_REASONING }},XAI_MODEL_FAST=${{ secrets.XAI_MODEL_FAST }},NEXUS_TOOLS_COLLECTION_ID=${{ secrets.NEXUS_TOOLS_COLLECTION_ID }},ALLOWED_USER_IDS=${{ secrets.ALLOWED_USER_IDS }},ADMIN_USER_ID=${{ secrets.ADMIN_USER_ID }},ENABLE_RESPONSES_TOOLS=true,MAX_OUTPUT_TOKENS=16000,LOG_LEVEL=INFO" \
+            --quiet
 
       - name: Set Telegram Webhook
         run: |
@@ -74,12 +60,12 @@ jobs:
             "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/setWebhook" \
             -d "url=${{ secrets.WEBHOOK_URL }}/webhook" \
             -d "secret_token=${{ secrets.WEBHOOK_SECRET }}" \
-            -d "allowed_updates=[\"message\",\"callback_query\"]" \
+            -d 'allowed_updates=["message","callback_query"]' \
             -d "drop_pending_updates=true" | python3 -m json.tool
 
-      - name: Smoke test
+      - name: Health check
         run: |
-          sleep 10
-          STATUS=$(curl -s -o /dev/null -w "%{http_code}" "${{ secrets.WEBHOOK_URL }}/health")
+          sleep 15
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" "${{ secrets.WEBHOOK_URL }}/health" || echo 000)
           echo "Health: $STATUS"
-          [ "$STATUS" = "200" ] && echo "✅ LIVE" || echo "⚠️ Check logs"
+          [[ "$STATUS" == "200" ]] && echo "✅ BOT LIVE" || echo "⚠️ not 200 - check Cloud Run logs"
