@@ -16,6 +16,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # BUG-001 FIX: credentials_json needs raw JSON — GCP_SA_KEY is stored as raw JSON
       - name: Authenticate to GCP
         uses: google-github-actions/auth@v2
         with:
@@ -36,6 +37,7 @@ jobs:
           docker push "$IMAGE"
           docker push "gcr.io/${{ secrets.GCP_PROJECT_ID }}/gigagrok:latest"
 
+      # BUG-008 FIX: split --set-env-vars into two calls to avoid 4096 char CLI limit
       - name: Deploy to Cloud Run
         run: |
           gcloud run deploy gigagrok \
@@ -51,21 +53,39 @@ jobs:
             --timeout=300 \
             --concurrency=80 \
             --project=${{ secrets.GCP_PROJECT_ID }} \
-            --set-env-vars="XAI_API_KEY=${{ secrets.XAI_API_KEY }},ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY }},TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }},WEBHOOK_URL=${{ secrets.WEBHOOK_URL }},WEBHOOK_SECRET=${{ secrets.WEBHOOK_SECRET }},NEXUS_AUTH_TOKEN=${{ secrets.NEXUS_AUTH_TOKEN }},NEXUS_MCP_URL=${{ secrets.NEXUS_MCP_URL }},GCP_PROJECT_ID=${{ secrets.GCP_PROJECT_ID }},XAI_MODEL_REASONING=${{ secrets.XAI_MODEL_REASONING }},XAI_MODEL_FAST=${{ secrets.XAI_MODEL_FAST }},NEXUS_TOOLS_COLLECTION_ID=${{ secrets.NEXUS_TOOLS_COLLECTION_ID }},ALLOWED_USER_IDS=${{ secrets.ALLOWED_USER_IDS }},ADMIN_USER_ID=${{ secrets.ADMIN_USER_ID }},ENABLE_RESPONSES_TOOLS=true,MAX_OUTPUT_TOKENS=16000,LOG_LEVEL=INFO" \
+            --set-env-vars="TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}" \
+            --update-env-vars="XAI_API_KEY=${{ secrets.XAI_API_KEY }}" \
+            --update-env-vars="ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY }}" \
+            --update-env-vars="WEBHOOK_URL=${{ secrets.WEBHOOK_URL }}" \
+            --update-env-vars="WEBHOOK_SECRET=${{ secrets.WEBHOOK_SECRET }}" \
+            --update-env-vars="NEXUS_AUTH_TOKEN=${{ secrets.NEXUS_AUTH_TOKEN }}" \
+            --update-env-vars="NEXUS_MCP_URL=${{ secrets.NEXUS_MCP_URL }}" \
+            --update-env-vars="GCP_PROJECT_ID=${{ secrets.GCP_PROJECT_ID }}" \
+            --update-env-vars="XAI_MODEL_REASONING=${{ secrets.XAI_MODEL_REASONING }}" \
+            --update-env-vars="XAI_MODEL_FAST=${{ secrets.XAI_MODEL_FAST }}" \
+            --update-env-vars="NEXUS_TOOLS_COLLECTION_ID=${{ secrets.NEXUS_TOOLS_COLLECTION_ID }}" \
+            --update-env-vars="ALLOWED_USER_IDS=${{ secrets.ALLOWED_USER_IDS }}" \
+            --update-env-vars="ADMIN_USER_ID=${{ secrets.ADMIN_USER_ID }}" \
+            --update-env-vars="ENABLE_RESPONSES_TOOLS=true" \
+            --update-env-vars="MAX_OUTPUT_TOKENS=16000" \
+            --update-env-vars="LOG_LEVEL=INFO" \
             --quiet
 
       - name: Set Telegram Webhook
         run: |
-          curl -s -X POST \
+          RESULT=$(curl -s -X POST \
             "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/setWebhook" \
             -d "url=${{ secrets.WEBHOOK_URL }}/webhook" \
             -d "secret_token=${{ secrets.WEBHOOK_SECRET }}" \
             -d 'allowed_updates=["message","callback_query"]' \
-            -d "drop_pending_updates=true" | python3 -m json.tool
+            -d "drop_pending_updates=true")
+          echo "Webhook result: $RESULT"
+          echo "$RESULT" | python3 -c "import sys,json; d=json.load(sys.stdin); exit(0 if d.get('ok') else 1)"
 
       - name: Health check
         run: |
           sleep 15
-          STATUS=$(curl -s -o /dev/null -w "%{http_code}" "${{ secrets.WEBHOOK_URL }}/health" || echo 000)
-          echo "Health: $STATUS"
-          [[ "$STATUS" == "200" ]] && echo "✅ BOT LIVE" || echo "⚠️ not 200 - check Cloud Run logs"
+          URL="${{ secrets.WEBHOOK_URL }}/health"
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$URL" || echo 000)
+          echo "🟥 Health $URL → HTTP $STATUS"
+          [[ "$STATUS" == "200" ]] && echo "✅ BOT LIVE" || echo "⚠️ not 200 — check Cloud Run logs"
