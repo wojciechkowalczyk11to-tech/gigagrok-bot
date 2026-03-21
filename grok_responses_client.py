@@ -58,23 +58,21 @@ class GrokResponsesClient:
 
         tools.append({
             "type": "function",
-            "function": {
-                "name": "ask_claude",
-                "description": (
-                    "Delegate to Claude Sonnet (Anthropic) for tasks requiring deep analysis, "
-                    "long-form reasoning, document synthesis, code review, or nuanced writing. "
-                    "Use when Grok needs a second opinion or specialised assistance."
-                ),
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "prompt": {
-                            "type": "string",
-                            "description": "Full question or task context to send to Claude",
-                        }
-                    },
-                    "required": ["prompt"],
+            "name": "ask_claude",
+            "description": (
+                "Delegate to Claude Sonnet (Anthropic) for tasks requiring deep analysis, "
+                "long-form reasoning, document synthesis, code review, or nuanced writing. "
+                "Use when Grok needs a second opinion or specialised assistance."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "prompt": {
+                        "type": "string",
+                        "description": "Full question or task context to send to Claude",
+                    }
                 },
+                "required": ["prompt"],
             },
         })
 
