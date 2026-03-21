@@ -86,8 +86,8 @@ class Settings(BaseSettings):
     secondary_webhook_port: int = 8444
     groq_api_key: str = ""
     xai_base_url: str = "https://api.x.ai/v1"
-    xai_model_reasoning: str = "grok-4.20-beta-latest-reasoning"
-    xai_model_fast: str = "grok-4.20-beta-latest-non-reasoning"
+    xai_model_reasoning: str = "grok-4.20-0309-reasoning"
+    xai_model_fast: str = "grok-4.20-0309-non-reasoning"
     db_path: str = "gigagrok.db"
     max_history: int = 20
     max_output_tokens: int = 16000

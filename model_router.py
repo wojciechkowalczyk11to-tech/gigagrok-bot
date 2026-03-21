@@ -129,13 +129,13 @@ def default_xai_config(api_key: str) -> ProviderConfig:
         api_key=api_key,
         base_url="https://api.x.ai/v1",
         profile_models={
-            Profile.ECO: "grok-4.20-beta-latest-non-reasoning",
-            Profile.SMART: "grok-4.20-beta-latest-reasoning",
-            Profile.DEEP: "grok-4.20-beta-latest-reasoning",
+            Profile.ECO: "grok-4.20-0309-non-reasoning",
+            Profile.SMART: "grok-4.20-0309-reasoning",
+            Profile.DEEP: "grok-4.20-0309-reasoning",
         },
         pricing={
-            "grok-4.20-beta-latest-reasoning": ModelPricing(input=2.0, output=10.0),
-            "grok-4.20-beta-latest-non-reasoning": ModelPricing(input=2.0, output=10.0),
+            "grok-4.20-0309-reasoning": ModelPricing(input=2.0, output=10.0),
+            "grok-4.20-0309-non-reasoning": ModelPricing(input=2.0, output=10.0),
             "grok-4-1-fast-reasoning": ModelPricing(input=0.20, output=0.50),
         },
         capabilities=frozenset({"reasoning", "tools", "search", "vision", "mcp"}),

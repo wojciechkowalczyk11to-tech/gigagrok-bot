@@ -24,7 +24,7 @@ def test_reasoning_model_default_is_grok_420_beta() -> None:
     config_module = _load_config_module()
     assert (
         config_module.settings.xai_model_reasoning
-        == "grok-4.20-beta-latest-reasoning"
+        == "grok-4.20-0309-reasoning"
     )
 
 
@@ -32,7 +32,7 @@ def test_fast_model_default_is_grok_420_non_reasoning() -> None:
     config_module = _load_config_module()
     assert (
         config_module.settings.xai_model_fast
-        == "grok-4.20-beta-latest-non-reasoning"
+        == "grok-4.20-0309-non-reasoning"
     )
 
 
