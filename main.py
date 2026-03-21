@@ -1,4 +1,4 @@
-"""GigaGrok Bot — entry point (webhook mode)."""
+"""GigaGrok Bot — entry point (webhook + polling mode)."""
 
 from __future__ import annotations
 
@@ -13,8 +13,11 @@ from telegram.ext import Application, CallbackQueryHandler, CommandHandler, Cont
 
 from config import settings
 from db import close_db, init_db
+from fallback import FallbackManager
 from grok_responses_client import GrokResponsesClient
 from healthcheck import start_healthcheck_server
+from model_router import ModelProvider, ModelRouter, Profile, default_xai_config
+from rate_limiter import RateLimiter
 from handlers.admin import adduser_command, removeuser_command, users_command
 from handlers.chat import handle_message, init_grok_client
 from handlers.collection import collection_command
@@ -27,6 +30,7 @@ from handlers.image import handle_photo, image_command
 from handlers.mode import fast_command
 from handlers.search import websearch_command, xsearch_command
 from handlers.start import help_callback, help_command, start_command
+from handlers.status import status_command as infra_status_command
 from handlers.voice import handle_voice, voice_toggle
 
 # ---------------------------------------------------------------------------
@@ -69,12 +73,29 @@ async def post_init(application: Application) -> None:  # type: ignore[type-arg]
     application.bot_data["grok_client"] = grok
     application.bot_data["http_client"] = httpx.AsyncClient(timeout=httpx.Timeout(120.0))
 
+    # --- Multi-model router (aligned with N.O.C Provider Factory) ---
+    router = ModelRouter()
+    router.register(default_xai_config(settings.xai_api_key))
+    application.bot_data["model_router"] = router
+
+    # --- Rate limiter ---
+    limiter = RateLimiter()
+    limiter.add_model_limit(settings.xai_model_reasoning, settings.rate_limit_rpm)
+    limiter.add_model_limit(settings.xai_model_fast, settings.rate_limit_rpm * 2)
+    application.bot_data["rate_limiter"] = limiter
+
+    # --- Fallback manager ---
+    fallback = FallbackManager(router)
+    application.bot_data["fallback_manager"] = fallback
+
     logger.info(
         "bot_started",
         model=settings.xai_model_reasoning,
+        run_mode=settings.run_mode,
         nexus_mcp=bool(settings.nexus_mcp_url),
         claude_bridge=bool(settings.anthropic_api_key),
-        webhook=f"{settings.webhook_url}/{settings.webhook_path}",
+        multi_model=settings.multi_model_enabled,
+        webhook=f"{settings.webhook_url}/{settings.webhook_path}" if settings.run_mode == "webhook" else "polling",
     )
 
 
@@ -154,14 +175,12 @@ def main() -> None:
     app.add_handler(CommandHandler("github", github_command))
     app.add_handler(CommandHandler("workspace", workspace_command))
     app.add_handler(CommandHandler("voice", voice_toggle))
+    app.add_handler(CommandHandler("botstatus", infra_status_command))
     app.add_handler(CallbackQueryHandler(help_callback, pattern=r"^help_"))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
     app.add_handler(MessageHandler(filters.VOICE | filters.AUDIO, handle_voice))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-
-    webhook_url = f"{settings.webhook_url}/{settings.webhook_path}"
-    logger.info("starting_webhook", url=webhook_url, port=settings.webhook_port)
 
     def _sigterm_handler(signum: int, frame: object) -> None:
         logger.info("sigterm_received")
@@ -169,20 +188,36 @@ def main() -> None:
 
     signal.signal(signal.SIGTERM, _sigterm_handler)
 
-    try:
-        app.run_webhook(
-            listen="0.0.0.0",
-            port=settings.webhook_port,
-            url_path=settings.webhook_path,
-            webhook_url=webhook_url,
-            secret_token=settings.webhook_secret,
-            allowed_updates=["message", "callback_query"],
-        )
-    finally:
-        if health_server:
-            health_server.shutdown()
-            health_server.server_close()
-            logger.info("healthcheck_stopped")
+    if settings.run_mode == "polling":
+        logger.info("starting_polling")
+        try:
+            app.run_polling(
+                allowed_updates=["message", "callback_query"],
+                drop_pending_updates=True,
+            )
+        finally:
+            if health_server:
+                health_server.shutdown()
+                health_server.server_close()
+                logger.info("healthcheck_stopped")
+    else:
+        webhook_url = f"{settings.webhook_url}/{settings.webhook_path}"
+        logger.info("starting_webhook", url=webhook_url, port=settings.webhook_port)
+
+        try:
+            app.run_webhook(
+                listen="0.0.0.0",
+                port=settings.webhook_port,
+                url_path=settings.webhook_path,
+                webhook_url=webhook_url,
+                secret_token=settings.webhook_secret,
+                allowed_updates=["message", "callback_query"],
+            )
+        finally:
+            if health_server:
+                health_server.shutdown()
+                health_server.server_close()
+                logger.info("healthcheck_stopped")
 
 
 if __name__ == "__main__":

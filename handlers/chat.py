@@ -14,7 +14,10 @@ from db import (
     get_user_setting,
     save_message_pair_and_stats,
 )
+from fallback import DegradationLevel, FallbackManager
 from grok_responses_client import GrokResponsesClient
+from model_router import ModelRouter, classify_query, complexity_to_profile
+from rate_limiter import RateLimiter
 from utils import (
     check_access,
     escape_html,
@@ -57,6 +60,29 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         query = f"{raw_query}\n\n=== KONTEKST PLIKU ===\n{file_context}"
     logger.info("handle_message", user_id=user_id, query_len=len(query))
 
+    # --- Router: select best model based on query complexity ---
+    router: ModelRouter | None = context.bot_data.get("model_router")
+    limiter: RateLimiter | None = context.bot_data.get("rate_limiter")
+    fallback_mgr: FallbackManager | None = context.bot_data.get("fallback_manager")
+
+    selected_model = settings.xai_model_reasoning
+    if router and settings.multi_model_enabled:
+        result = router.select_for_text(
+            query, needs_tools=True, needs_search=True,
+        )
+        if result:
+            _, selected_model = result
+            logger.info("model_selected", model=selected_model)
+
+    # --- Rate limiter: check quota before calling API ---
+    if limiter:
+        ok, reason = await limiter.check_and_acquire(user_id, selected_model)
+        if not ok:
+            await update.message.reply_text(
+                f"⏳ {escape_html(reason)}", parse_mode="HTML",
+            )
+            return
+
     # 2. History
     history = await get_history(user_id, limit=settings.max_history)
 
@@ -72,6 +98,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         messages.append({"role": msg["role"], "content": msg["content"]})
     messages.append({"role": "user", "content": query})
 
+    # --- Fallback: truncate context if in degraded mode ---
+    if fallback_mgr:
+        messages = fallback_mgr.truncate_for_degradation(messages)
+
     # 5. Placeholder
     sent = await update.message.reply_text("🧠 <i>Grok myśli...</i>", parse_mode="HTML")
 
@@ -85,7 +115,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     try:
         async for event_type, data in _grok.chat_stream(
             messages,
-            model=settings.xai_model_reasoning,
+            model=selected_model,
             max_tokens=settings.max_output_tokens,
         ):
             if event_type == "reasoning":
@@ -128,9 +158,26 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 usage = data
 
     except Exception as exc:
-        logger.error("grok_api_error", error=str(exc))
+        logger.error("grok_api_error", error=str(exc), model=selected_model)
+
+        # --- Fallback: try to recover ---
+        if fallback_mgr:
+            from model_router import ModelProvider
+            fallback_mgr.record_failure(ModelProvider.XAI_GROK, exc, model=selected_model)
+
+            # If all models down → minimal response
+            if fallback_mgr.level == DegradationLevel.MINIMAL:
+                result = fallback_mgr.get_minimal_response(raw_query)
+                await sent.edit_text(result.content, parse_mode="HTML")
+                return
+
         await sent.edit_text(f"❌ Błąd API: {escape_html(str(exc))}", parse_mode="HTML")
         return
+
+    # --- Success: record in circuit breaker ---
+    if fallback_mgr:
+        from model_router import ModelProvider
+        fallback_mgr.record_success(ModelProvider.XAI_GROK)
 
     # 7. Footer
     elapsed = time.time() - start_time
@@ -140,13 +187,18 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     cost = calculate_cost(tokens_in, tokens_out, reasoning_tokens)
 
     footer = format_footer(
-        settings.xai_model_reasoning,
+        selected_model,
         tokens_in,
         tokens_out,
         reasoning_tokens,
         cost,
         elapsed,
     )
+
+    # --- Rate limiter: record actual usage ---
+    if limiter:
+        total_tokens = tokens_in + tokens_out + reasoning_tokens
+        limiter.record_usage(user_id, total_tokens, cost)
 
     # 8. Final message (split if needed)
     final_text = f"{markdown_to_telegram_html(full_content)}\n\n<code>{escape_html(footer)}</code>"
@@ -169,7 +221,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         user_content=raw_query,
         assistant_content=full_content,
         reasoning_content=full_reasoning,
-        model=settings.xai_model_reasoning,
+        model=selected_model,
         tokens_in=tokens_in,
         tokens_out=tokens_out,
         reasoning_tokens=reasoning_tokens,

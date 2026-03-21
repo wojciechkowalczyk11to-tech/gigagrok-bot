@@ -1,7 +1,15 @@
-"""GigaGrok Bot configuration — Pydantic BaseSettings with .env support."""
+"""GigaGrok Bot configuration — Pydantic BaseSettings with .env support.
+
+Enhanced with:
+- Polling mode support for local/Codespace testing
+- Multi-model provider keys
+- Feature flags (aligned with nexus-omega-core)
+- Improved validators
+"""
 
 from __future__ import annotations
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -56,13 +64,17 @@ class Settings(BaseSettings):
         env_file=".env",
         env_file_encoding="utf-8",
         case_sensitive=False,
+        extra="ignore",
     )
 
     # --- Required ---
     xai_api_key: str
     telegram_bot_token: str
-    webhook_url: str
-    webhook_secret: str
+    webhook_url: str = ""
+    webhook_secret: str = ""
+
+    # --- Run mode ---
+    run_mode: str = "webhook"  # "webhook" or "polling"
 
     # --- Optional with defaults ---
     allowed_user_ids: str = ""
@@ -91,12 +103,40 @@ class Settings(BaseSettings):
     gigagrok_max_output_tokens: int = 16000
     gigagrok_context_messages: int = 5
 
+    # === Multi-model provider keys (aligned with N.O.C) ===
+    deepseek_api_key: str = ""
+    gemini_api_key: str = ""
+    groq_model: str = "llama-3.3-70b-versatile"
+
     # === NEXUS MCP integration ===
     nexus_mcp_url: str = "https://mcp.nexus-oc.pl/mcp"
     nexus_auth_token: str = ""
 
     # === Claude bridge (ask_claude tool) ===
     anthropic_api_key: str = ""
+
+    # === Rate limiting & budgets ===
+    rate_limit_rpm: int = 30
+    daily_cost_cap_usd: float = 5.0
+    daily_request_cap: int = 200
+
+    # === Feature flags ===
+    multi_model_enabled: bool = False
+    voice_feature_enabled: bool = True
+
+    @field_validator("run_mode")
+    @classmethod
+    def validate_run_mode(cls, v: str) -> str:
+        if v not in ("webhook", "polling"):
+            raise ValueError("run_mode must be 'webhook' or 'polling'")
+        return v
+
+    @field_validator("webhook_url")
+    @classmethod
+    def validate_webhook_url(cls, v: str) -> str:
+        if v and not v.startswith(("http://", "https://")):
+            raise ValueError("webhook_url must start with http:// or https://")
+        return v
 
     @property
     def allowed_users(self) -> set[int]:
